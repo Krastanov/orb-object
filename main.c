@@ -1,5 +1,5 @@
 /**
- * @brief nRF52 Watch.
+ * @brief nRF52 Orb.
  *
  * This file contains the source code for a sample server application using the LED Button service.
  */
@@ -701,7 +701,7 @@ int main(void)
     application_timers_start();
 
     // Start execution.
-    NRF_LOG_INFO("Watch started.");
+    NRF_LOG_INFO("Orb started.");
     advertising_start();
 
     // Enter main loop.
