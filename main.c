@@ -4,6 +4,10 @@
  * This file contains the source code for a sample server application using the LED Button service.
  */
 
+// TODO move to nrfx namespace instead of nrf_drv (waiting on multiple nordic libraries)
+// TODO a bunch of unnecessary headers are included or listed in config, remove them
+// TODO most of the APP_ERROR_CHECK might need to become VERIFY_SUCCESS (from sdk_macros.h) and the error handler for APP_ERROR_CHECK might need changing
+
 #include <stdint.h>
 #include <string.h>
 #include "nordic_common.h"
@@ -25,6 +29,8 @@
 #include "nrf_pwr_mgmt.h"
 #include "nrfx_saadc.h"
 #include "nrfx_pwm.h"
+#include "nrf_twi_mngr.h"
+#include "nrf_twi_sensor.h"
 
 // NFC
 #include "nfc_t2t_lib.h"
@@ -37,6 +43,12 @@
 #include "nrf_log_default_backends.h"
 
 #include "haptic_service.h"
+
+#include "mpu.h"
+
+#define MPU_SCL  6
+#define MPU_SDA  4
+#define MPU_IRQ  3
 
 #define MODULAR_BUTTON                  18
  
@@ -754,6 +766,7 @@ int main(void)
     conn_params_init();
     application_timers_start();
     nfc_init();
+    mpu_init(MPU_SCL, MPU_SDA, MPU_IRQ);
 
     // Start execution.
     NRF_LOG_INFO("Orb started.");
