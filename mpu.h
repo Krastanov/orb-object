@@ -3,11 +3,13 @@
 #include "nrf_log.h"
 #include "nrf_delay.h"
 #include "nrfx_gpiote.h"
+#include "MadgwickAHRS.h"
 
 #define MPU_ADDR 0b1101001
 
 #define MPU_WHO_ADDR 0x75 
-#define MPU_WHO 0x71
+#define MPU_WHO_9250 0x71
+#define MPU_WHO_9255 0x73
 
 #define MPU_PWR_MGMT_1 0x6B
 #define MPU_SMPLRT_DIV 0x19
@@ -33,7 +35,7 @@
 
 #define MAG_ADDR 0x0C
 #define MAG_WHO_ADDR 0x00
-#define MAG_WHO 0x75
+#define MAG_WHO 0x48
 #define MAG_CNTL 0x0A // Power down (0000), single-measurement (0001), self-test (1000) and Fuse ROM (1111) modes on bits 3:0
 #define MAG_ASAX 0x10 // Fuse ROM x-axis sensitivity adjustment value
 #define MAG_ST1 0x02 // data ready status bit 0
@@ -68,13 +70,17 @@ enum Mscale
 };
 
 // Specify sensor full scale
-static uint8_t Gscale = GFS_250DPS;
-static uint8_t Ascale = AFS_2G;
-static uint8_t Mscale = MFS_16BITS; // Choose either 14-bit or 16-bit magnetometer resolution
+static const uint8_t Gscale = GFS_250DPS;
+static const uint8_t Ascale = AFS_2G;
+static const uint8_t Mscale = MFS_16BITS; // Choose either 14-bit or 16-bit magnetometer resolution
 
-static uint8_t Mmode = 0x02; // 2 for 8 Hz, 6 for 100 Hz continuous magnetometer data read
+static const float gres = 250.0/32768.0; // in units of deg/s
+static const float ares = 2.0/32768.0; // in units of g
+static const float mres = 10.*4912/32768.0; // in units of mG
 
-static uint8_t sens_buffer[MPU_SENS_SIZE];  /**< Buffer for all sensor data (accel, temp, gyro, mag). */
+static const uint8_t Mmode = 0x06; // 2 for 8 Hz, 6 for 100 Hz continuous magnetometer data read
+
+static uint8_t sens_buffer[MPU_SENS_SIZE];  /**< Buffer for all sensor data (accel, temp, gyro, mag). */ // TODO explain why this is not volatile.
 static float magcalibration[3]; // Calibration values for the magnetometer.
 
 NRF_TWI_MNGR_DEF(m_twi_mngr, 4, 0);         /**< TWI transaction manager.*/
@@ -82,14 +88,29 @@ NRF_TWI_SENSOR_DEF(m_mpu, &m_twi_mngr, 30); /**< TWI Sensor instance.*/
 
 void fusion_accel_gyro()
 {
-    // TODO
-    NRF_LOG_DEBUG("HERE FUSION HAPPENS");
+    float gx, gy, gz, ax, ay, az;
+    gx = (float)(((int16_t)sens_buffer[ 0]<<8) | sens_buffer[ 1]) * gres;
+    gy = (float)(((int16_t)sens_buffer[ 2]<<8) | sens_buffer[ 3]) * gres;
+    gz = (float)(((int16_t)sens_buffer[ 4]<<8) | sens_buffer[ 5]) * gres;
+    ax = (float)(((int16_t)sens_buffer[ 8]<<8) | sens_buffer[ 9]) * gres;
+    ay = (float)(((int16_t)sens_buffer[10]<<8) | sens_buffer[11]) * gres;
+    az = (float)(((int16_t)sens_buffer[12]<<8) | sens_buffer[13]) * gres;
+    MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
 }
 
 void fusion_accel_gyro_mag()
 {
-    // TODO
-    NRF_LOG_DEBUG("HERE BETTER FUSION HAPPENS");
+    float gx, gy, gz, ax, ay, az, mx, my, mz;
+    gx = (float)(((int16_t)sens_buffer[ 0]<<8) | sens_buffer[ 1]) * gres;
+    gy = (float)(((int16_t)sens_buffer[ 2]<<8) | sens_buffer[ 3]) * gres;
+    gz = (float)(((int16_t)sens_buffer[ 4]<<8) | sens_buffer[ 5]) * gres;
+    ax = (float)(((int16_t)sens_buffer[ 8]<<8) | sens_buffer[ 9]) * gres;
+    ay = (float)(((int16_t)sens_buffer[10]<<8) | sens_buffer[11]) * gres;
+    az = (float)(((int16_t)sens_buffer[12]<<8) | sens_buffer[13]) * gres;
+    mx = (float)(((int16_t)sens_buffer[15]<<8) | sens_buffer[14]) * gres;
+    my = (float)(((int16_t)sens_buffer[17]<<8) | sens_buffer[16]) * gres;
+    mz = (float)(((int16_t)sens_buffer[19]<<8) | sens_buffer[18]) * gres;
+    MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
 }
 
 /**@brief Check the AK8963 readings. Call sensor fusion accordingly. To be set as callback from inside check_mag_ready_cb. If this is not fast, everything breaks.
@@ -135,7 +156,7 @@ void mpu_read_and_fuse_sensors()
     ret_code_t err_code;
     err_code = nrf_twi_sensor_reg_read(&m_mpu, MPU_ADDR, MPU_SENS_ADDR, NULL, sens_buffer, MPU_MAG_OFFSET);
     APP_ERROR_CHECK(err_code);
-    err_code = nrf_twi_sensor_reg_read(&m_mpu, MAG_ADDR, MAG_ST1, check_mag_ready_cb, sens_buffer+MPU_MAG_OFFSET, 1);
+    err_code = nrf_twi_sensor_reg_read(&m_mpu, MAG_ADDR, MAG_ST1, check_mag_ready_cb, sens_buffer+MPU_MAG_OFFSET, 1); // TODO Unless we are using the fancy i2c chaining, using the same buffer for MPU and MAG is not necessary. We are not using the fancy i2c chaining.
     APP_ERROR_CHECK(err_code);
 }
 
@@ -178,7 +199,7 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq) // based on github.com/kris
 
     // Check connection to MPU.
     read_byte(MPU_WHO_ADDR);
-    if (buffer[0]!=MPU_WHO)
+    if (buffer[0]!=MPU_WHO_9250 && buffer[0]!=MPU_WHO_9255)
     {
         NRF_LOG_DEBUG("MPU not recognized. WHO_AM_I is 0x%x", buffer[0]);
         APP_ERROR_CHECK(1); // TODO proper error code
@@ -307,7 +328,9 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq) // based on github.com/kris
     nrfx_gpiote_in_config_t irq_config = NRFX_GPIOTE_CONFIG_IN_SENSE_LOTOHI(true);
     err_code = nrfx_gpiote_in_init(irq, &irq_config, irq_callback);
     APP_ERROR_CHECK(err_code);
+    nrfx_gpiote_in_event_enable(irq, true);
     mpu_read_and_fuse_sensors();
+    NRF_LOG_DEBUG("Done");
 }
 
 // TODO make the following convenience functions
