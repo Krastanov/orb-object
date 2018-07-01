@@ -717,12 +717,16 @@ static void nfc_callback(void * p_context, nfc_t2t_event_t event, const uint8_t 
 static void nfc_init(void)
 {
     ret_code_t err_code;
+    static ble_gap_addr_t gap_addr;
 
-   /* Set up NFC */
+    /*Reading the BLE MAC Address*/
+    err_code = sd_ble_gap_addr_get(&gap_addr);
+    APP_ERROR_CHECK(err_code);
+    /* Set up NFC */
     err_code = nfc_t2t_setup(nfc_callback, NULL);
     APP_ERROR_CHECK(err_code);
     /* Set created message as the NFC payload */
-    err_code = nfc_t2t_payload_set((uint8_t*)(NRF_FICR->DEVICEADDR), 8);
+    err_code = nfc_t2t_payload_set(gap_addr.addr, 6);
     APP_ERROR_CHECK(err_code);
 
     /* Start sensing NFC field */
