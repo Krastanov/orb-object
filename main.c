@@ -26,6 +26,12 @@
 #include "nrfx_saadc.h"
 #include "nrfx_pwm.h"
 
+// NFC
+#include "nfc_t2t_lib.h"
+#include "nfc_ndef_msg.h"
+#include "nfc_text_rec.h"
+
+
 #include "nrf_log.h"
 #include "nrf_log_ctrl.h"
 #include "nrf_log_default_backends.h"
@@ -69,6 +75,10 @@ HAPTIC_SERVICE_DEF(m_haptic_service);                                           
 BLE_BAS_DEF(m_bas);                                                             /**< Battery Service instance. */
 NRF_BLE_GATT_DEF(m_gatt);                                                       /**< GATT module instance. */
 NRF_BLE_QWR_DEF(m_qwr);                                                         /**< Context for the Queued Write module.*/
+
+
+
+
 
 static nrfx_pwm_t m_pwm = NRFX_PWM_INSTANCE(0);
 
@@ -679,6 +689,50 @@ static void application_timers_start(void)
     APP_ERROR_CHECK(err_code);
 }
 
+/**
+ * @brief Callback function for handling NFC events.
+ */
+static void nfc_callback(void * p_context, nfc_t2t_event_t event, const uint8_t * p_data, size_t data_length)
+{
+    (void)p_context;
+
+    switch (event)
+    {
+        case NFC_T2T_EVENT_FIELD_ON:
+        // TODO add Visual/Haptic Feedback
+            break;
+        case NFC_T2T_EVENT_FIELD_OFF:
+        // TODO add Visual/Haptic Feedback
+            break;
+        default:
+            break;
+    }
+}
+
+/**
+ * @brief Setup NFC.
+ */
+
+
+static void nfc_init(void)
+{
+    ret_code_t err_code;
+    static ble_gap_addr_t gap_addr;
+
+    /*Reading the BLE MAC Address*/
+    err_code = sd_ble_gap_addr_get(&gap_addr);
+    APP_ERROR_CHECK(err_code);
+    /* Set up NFC */
+    err_code = nfc_t2t_setup(nfc_callback, NULL);
+    APP_ERROR_CHECK(err_code);
+    /* Set created message as the NFC payload */
+    err_code = nfc_t2t_payload_set(gap_addr.addr, 6);
+    APP_ERROR_CHECK(err_code);
+
+    /* Start sensing NFC field */
+    err_code = nfc_t2t_emulation_start();
+    APP_ERROR_CHECK(err_code);
+}
 
 /**@brief Function for application main entry.
  */
@@ -699,6 +753,7 @@ int main(void)
     advertising_init();
     conn_params_init();
     application_timers_start();
+    nfc_init();
 
     // Start execution.
     NRF_LOG_INFO("Orb started.");
