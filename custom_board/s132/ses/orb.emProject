@@ -125,6 +125,8 @@
       <file file_name="../../../../../../components/nfc/t2t_lib/nfc_t2t_lib_gcc.a" />
       <file file_name="../../../../../../components/nfc/ndef/text/nfc_text_rec.c" />
     </folder>
+    <configuration Name="Debug" linker_printf_fp_enabled="Float" />
+    <configuration Name="Release" linker_printf_fp_enabled="Float" />
   </project>
   <configuration
     Name="Release"

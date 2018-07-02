@@ -31,7 +31,7 @@
 #define MPU_GYRO_OFFSET 8
 #define MPU_MAG_OFFSET 14
 #define MPU_MAG_OVERFLOW_OFFSET 20
-#define MPU_SENS_SIZE 21
+#define MPU_SENS_SIZE 3*6+2+1+1 // a,temp,g,m, and mag status registers
 
 #define MAG_ADDR 0x0C
 #define MAG_WHO_ADDR 0x00
@@ -65,8 +65,8 @@ enum Gscale
 
 enum Mscale
 {
-  MFS_14BITS = 0, // 0.6 mG per LSB
-  MFS_16BITS      // 0.15 mG per LSB
+  MFS_14BITS = 0, // 0.6 uT per LSB
+  MFS_16BITS      // 0.15 uT per LSB
 };
 
 // Specify sensor full scale
@@ -74,43 +74,61 @@ static const uint8_t Gscale = GFS_250DPS;
 static const uint8_t Ascale = AFS_2G;
 static const uint8_t Mscale = MFS_16BITS; // Choose either 14-bit or 16-bit magnetometer resolution
 
-static const float gres = 250.0/32768.0; // in units of deg/s
+// TODO verify these experimentally... there is definitely something wrong with the a (it is off by a factor of 2)
+static const float gres = 250.0/32768.0*3.1415/180; // in units of rad/s
 static const float ares = 2.0/32768.0; // in units of g
-static const float mres = 10.*4912/32768.0; // in units of mG
+static const float mres = 0.15; // in units of uTesla
 
 static const uint8_t Mmode = 0x06; // 2 for 8 Hz, 6 for 100 Hz continuous magnetometer data read
 
 static uint8_t sens_buffer[MPU_SENS_SIZE];  /**< Buffer for all sensor data (accel, temp, gyro, mag). */ // TODO explain why this is not volatile.
-static float magcalibration[3]; // Calibration values for the magnetometer.
+static float magcalibration[3]; // Calibration values for the magnetometer. // TODO use them.
+
+static volatile float gx, gy, gz, ax, ay, az, mx, my, mz;
 
 NRF_TWI_MNGR_DEF(m_twi_mngr, 4, 0);         /**< TWI transaction manager.*/
 NRF_TWI_SENSOR_DEF(m_mpu, &m_twi_mngr, 30); /**< TWI Sensor instance.*/
 
-void fusion_accel_gyro()
+void fusion_accel_gyro() // This is expected to be invoked at 100Hz, interleaved with `fusion_accel_gyro_mag`
 {
-    float gx, gy, gz, ax, ay, az;
-    gx = (float)(((int16_t)sens_buffer[ 0]<<8) | sens_buffer[ 1]) * gres;
-    gy = (float)(((int16_t)sens_buffer[ 2]<<8) | sens_buffer[ 3]) * gres;
-    gz = (float)(((int16_t)sens_buffer[ 4]<<8) | sens_buffer[ 5]) * gres;
-    ax = (float)(((int16_t)sens_buffer[ 8]<<8) | sens_buffer[ 9]) * gres;
-    ay = (float)(((int16_t)sens_buffer[10]<<8) | sens_buffer[11]) * gres;
-    az = (float)(((int16_t)sens_buffer[12]<<8) | sens_buffer[13]) * gres;
+    ax = ((int16_t)((int16_t)sens_buffer[ 0] << 8 | sens_buffer[ 1]))*ares;
+    ay = ((int16_t)((int16_t)sens_buffer[ 2] << 8 | sens_buffer[ 3]))*ares;
+    az = ((int16_t)((int16_t)sens_buffer[ 4] << 8 | sens_buffer[ 5]))*ares;
+    gx = ((int16_t)((int16_t)sens_buffer[ 8] << 8 | sens_buffer[ 9]))*gres;
+    gy = ((int16_t)((int16_t)sens_buffer[10] << 8 | sens_buffer[11]))*gres;
+    gz = ((int16_t)((int16_t)sens_buffer[12] << 8 | sens_buffer[13]))*gres;
     MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
 }
 
-void fusion_accel_gyro_mag()
+void fusion_accel_gyro_mag() // This is expected to be invoked at 100Hz, interleaved with `fusion_accel_gyro`
 {
-    float gx, gy, gz, ax, ay, az, mx, my, mz;
-    gx = (float)(((int16_t)sens_buffer[ 0]<<8) | sens_buffer[ 1]) * gres;
-    gy = (float)(((int16_t)sens_buffer[ 2]<<8) | sens_buffer[ 3]) * gres;
-    gz = (float)(((int16_t)sens_buffer[ 4]<<8) | sens_buffer[ 5]) * gres;
-    ax = (float)(((int16_t)sens_buffer[ 8]<<8) | sens_buffer[ 9]) * gres;
-    ay = (float)(((int16_t)sens_buffer[10]<<8) | sens_buffer[11]) * gres;
-    az = (float)(((int16_t)sens_buffer[12]<<8) | sens_buffer[13]) * gres;
-    mx = (float)(((int16_t)sens_buffer[15]<<8) | sens_buffer[14]) * gres;
-    my = (float)(((int16_t)sens_buffer[17]<<8) | sens_buffer[16]) * gres;
-    mz = (float)(((int16_t)sens_buffer[19]<<8) | sens_buffer[18]) * gres;
-    MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
+    ax = ((int16_t)((int16_t)sens_buffer[ 0] << 8 | sens_buffer[ 1]))*ares;
+    ay = ((int16_t)((int16_t)sens_buffer[ 2] << 8 | sens_buffer[ 3]))*ares;
+    az = ((int16_t)((int16_t)sens_buffer[ 4] << 8 | sens_buffer[ 5]))*ares;
+    gx = ((int16_t)((int16_t)sens_buffer[ 8] << 8 | sens_buffer[ 9]))*gres;
+    gy = ((int16_t)((int16_t)sens_buffer[10] << 8 | sens_buffer[11]))*gres;
+    gz = ((int16_t)((int16_t)sens_buffer[12] << 8 | sens_buffer[13]))*gres;
+    my = ((int16_t)((int16_t)sens_buffer[15] << 8 | sens_buffer[14]))*magcalibration[0];
+    mx = ((int16_t)((int16_t)sens_buffer[17] << 8 | sens_buffer[16]))*magcalibration[1];
+    mz =-((int16_t)((int16_t)sens_buffer[19] << 8 | sens_buffer[18]))*magcalibration[2];
+    // TODO the local magnetic fields need to be substracted from mx/y/z before it is useful.
+    //MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
+    MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
+    static int i = 0;
+    i++;
+    if (i==20){
+        //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(ax), sens_buffer[ 0], sens_buffer[ 1]);
+        //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(ay), sens_buffer[ 2], sens_buffer[ 3]);
+        //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(az), sens_buffer[ 4], sens_buffer[ 5]);
+        //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(gx), sens_buffer[ 8], sens_buffer[ 9]);
+        //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(gy), sens_buffer[10], sens_buffer[11]);
+        //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(gz), sens_buffer[12], sens_buffer[13]);
+        //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(mx), sens_buffer[15], sens_buffer[14]);
+        //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(my), sens_buffer[17], sens_buffer[16]);
+        //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(mz), sens_buffer[19], sens_buffer[18]);
+        NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(q0));
+        i=0;
+    }
 }
 
 /**@brief Check the AK8963 readings. Call sensor fusion accordingly. To be set as callback from inside check_mag_ready_cb. If this is not fast, everything breaks.
@@ -156,7 +174,7 @@ void mpu_read_and_fuse_sensors()
     ret_code_t err_code;
     err_code = nrf_twi_sensor_reg_read(&m_mpu, MPU_ADDR, MPU_SENS_ADDR, NULL, sens_buffer, MPU_MAG_OFFSET);
     APP_ERROR_CHECK(err_code);
-    err_code = nrf_twi_sensor_reg_read(&m_mpu, MAG_ADDR, MAG_ST1, check_mag_ready_cb, sens_buffer+MPU_MAG_OFFSET, 1); // TODO Unless we are using the fancy i2c chaining, using the same buffer for MPU and MAG is not necessary. We are not using the fancy i2c chaining.
+    err_code = nrf_twi_sensor_reg_read(&m_mpu, MAG_ADDR, MAG_ST1, check_mag_ready_cb, sens_buffer+MPU_MAG_OFFSET+6+2, 1); // TODO Unless we are using the fancy i2c chaining, using the same buffer for MPU and MAG is not necessary. We are not using the fancy i2c chaining.
     APP_ERROR_CHECK(err_code);
 }
 
@@ -282,11 +300,11 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq) // based on github.com/kris
     write_mag_byte(MAG_CNTL, 0x0F); // Enter Fuse ROM access mode
     nrf_delay_ms(10);
     read_mag_byte(MAG_ASAX);  // Read the x-, y-, and z-axis calibration values
-    magcalibration[0] =  (float)(buffer[0] - 128)/256. + 1.;   // Return x-axis sensitivity adjustment values, etc.
+    magcalibration[0] = ((float)(buffer[0] - 128)/256. + 1.)*mres;   // Return x-axis sensitivity adjustment values, etc.
     read_mag_byte(MAG_ASAX+1);
-    magcalibration[1] =  (float)(buffer[0] - 128)/256. + 1.;
+    magcalibration[1] = ((float)(buffer[0] - 128)/256. + 1.)*mres;
     read_mag_byte(MAG_ASAX+2);
-    magcalibration[2] =  (float)(buffer[0] - 128)/256. + 1.;
+    magcalibration[2] = ((float)(buffer[0] - 128)/256. + 1.)*mres;
     write_mag_byte(MAG_CNTL, 0x00); // Power down magnetometer  
     nrf_delay_ms(10);
     // Configure the magnetometer for continuous read and highest resolution
