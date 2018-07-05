@@ -9,6 +9,7 @@
 // 29/09/2011	SOH Madgwick    Initial release
 // 02/10/2011	SOH Madgwick	Optimised for reduced CPU load
 // 19/02/2012	SOH Madgwick	Magnetometer measurement is normalised
+// 05/07/2018	S Krastanov	Provide x/y kinematic acceleration
 //
 //=====================================================================================================
 
@@ -22,13 +23,14 @@
 // Definitions
 
 #define sampleFreq	200.0f		// sample frequency in Hz
-#define betaDef		0.1f		// 2 * proportional gain
+#define betaDef		0.6f		// 2 * proportional gain (original value is 0.1)
 
 //---------------------------------------------------------------------------------------------------
 // Variable definitions
 
 volatile float beta = betaDef;								// 2 * proportional gain (Kp)
 volatile float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f;	// quaternion of sensor frame relative to auxiliary frame
+volatile float kax=0, kay=0, kaz=0;
 
 //---------------------------------------------------------------------------------------------------
 // Function declarations
@@ -140,11 +142,12 @@ void MadgwickAHRSupdate(float gx, float gy, float gz, float ax, float ay, float 
 //---------------------------------------------------------------------------------------------------
 // IMU algorithm update
 
-void MadgwickAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay, float az) {
+void MadgwickAHRSupdateIMU(float gx, float gy, float gz, float ax_, float ay_, float az_) {
 	float recipNorm;
 	float s0, s1, s2, s3;
 	float qDot1, qDot2, qDot3, qDot4;
 	float _2q0, _2q1, _2q2, _2q3, _4q0, _4q1, _4q2 ,_8q1, _8q2, q0q0, q1q1, q2q2, q3q3;
+        float ax=ax_, ay=ay_, az=az_;
 
 	// Rate of change of quaternion from gyroscope
 	qDot1 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz);
@@ -206,6 +209,11 @@ void MadgwickAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay, flo
 	q1 *= recipNorm;
 	q2 *= recipNorm;
 	q3 *= recipNorm;
+
+	// Kinematic acceleration
+	kax = (1-2*(q2*q2+q3*q3))*ax_ +     2*(q1*q2-q3*q0)*ay_ +     2*(q1*q3+q2*q0)*az_;
+	kay =     2*(q1*q2+q3*q0)*ax_ + (1-2*(q1*q1+q3*q3))*ay_ +     2*(q2*q3-q1*q0)*az_;
+	kaz =     2*(q1*q3-q2*q0)*ax_ +     2*(q2*q3+q1*q0)*ay_ + (1-2*(q1*q1+q2*q2))*az_ - 1;
 }
 
 //---------------------------------------------------------------------------------------------------

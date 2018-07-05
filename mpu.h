@@ -100,17 +100,6 @@ NRF_TWI_SENSOR_DEF(m_mpu, &m_twi_mngr, 30); /**< TWI Sensor instance.*/
 // MPU BLE Service instance, to be initilized in mpu_init
 MPU_SERVICE_DEF(m_mpu_service);
 
-static void fusion_accel_gyro() // This is expected to be invoked at 100Hz, interleaved with `fusion_accel_gyro_mag`
-{
-    ax = ((int16_t)((int16_t)sens_buffer[ 0] << 8 | sens_buffer[ 1]))*ares;
-    ay = ((int16_t)((int16_t)sens_buffer[ 2] << 8 | sens_buffer[ 3]))*ares;
-    az = ((int16_t)((int16_t)sens_buffer[ 4] << 8 | sens_buffer[ 5]))*ares;
-    gx = ((int16_t)((int16_t)sens_buffer[ 8] << 8 | sens_buffer[ 9]))*gres;
-    gy = ((int16_t)((int16_t)sens_buffer[10] << 8 | sens_buffer[11]))*gres;
-    gz = ((int16_t)((int16_t)sens_buffer[12] << 8 | sens_buffer[13]))*gres;
-    MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
-}
-
 static void fusion_accel_gyro_mag() // This is expected to be invoked at 100Hz, interleaved with `fusion_accel_gyro`
 {
     ax = ((int16_t)((int16_t)sens_buffer[ 0] << 8 | sens_buffer[ 1]))*ares;
@@ -138,8 +127,25 @@ static void fusion_accel_gyro_mag() // This is expected to be invoked at 100Hz, 
         //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(my), sens_buffer[17], sens_buffer[16]);
         //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(mz), sens_buffer[19], sens_buffer[18]);
         //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(q0));
+        //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(kax));
+        //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(kay));
+        //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(kaz));
+        //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(q0*q0+q1*q1+q2*q2+q3*q3));
+        //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(ax*ax+ay*ay+az*az));
+        //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(kax*kax+kay*kay+(kaz+1)*(kaz+1)));
         i=0;
     }
+}
+
+static void fusion_accel_gyro() // This is expected to be invoked at 100Hz, interleaved with `fusion_accel_gyro_mag`
+{
+    ax = ((int16_t)((int16_t)sens_buffer[ 0] << 8 | sens_buffer[ 1]))*ares;
+    ay = ((int16_t)((int16_t)sens_buffer[ 2] << 8 | sens_buffer[ 3]))*ares;
+    az = ((int16_t)((int16_t)sens_buffer[ 4] << 8 | sens_buffer[ 5]))*ares;
+    gx = ((int16_t)((int16_t)sens_buffer[ 8] << 8 | sens_buffer[ 9]))*gres;
+    gy = ((int16_t)((int16_t)sens_buffer[10] << 8 | sens_buffer[11]))*gres;
+    gz = ((int16_t)((int16_t)sens_buffer[12] << 8 | sens_buffer[13]))*gres;
+    MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
 }
 
 /**@brief Check the AK8963 readings. Call sensor fusion accordingly. To be set as callback from inside check_mag_ready_cb. If this is not fast, everything breaks.
@@ -200,15 +206,7 @@ static void irq_callback(nrfx_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
  */
 void mpu_ble_notification(void * p_context)
 {
-    ret_code_t err_code;
-    err_code = mpu_service_on_orientation_change(*(uint16_t*)p_context, &m_mpu_service, q0, q1, q2, q3);
-    if (err_code != NRF_SUCCESS &&
-        err_code != BLE_ERROR_INVALID_CONN_HANDLE &&
-        err_code != NRF_ERROR_INVALID_STATE &&
-        err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
-    {
-        APP_ERROR_CHECK(err_code);
-    }
+    mpu_service_on_orientation_change(*(uint16_t*)p_context, &m_mpu_service, q0, q1, q2, q3, kax, kay, kaz);
 }
 
 // For use only inside mpu_init!

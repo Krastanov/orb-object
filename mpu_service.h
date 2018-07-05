@@ -42,8 +42,9 @@ NRF_SDH_BLE_OBSERVER(_name ## _obs,                                             
                      mpu_service_on_ble_evt, &_name)
 
 #define MPU_SERVICE_UUID_BASE        {0x0A, 0x72, 0x1F, 0x75, 0x91, 0xDF, 0x45, 0x51, 0x84, 0x04, 0x0C, 0xAF, 0x06, 0xAE, 0xB9, 0x1C}
-#define MPU_SERVICE_UUID_SERVICE     0x1623
-#define MPU_SERVICE_UUID_QUAT_CHAR   0x1624
+#define MPU_SERVICE_UUID_SERVICE         0x1623
+#define MPU_SERVICE_UUID_QUAT_CHAR       0x1624
+#define MPU_SERVICE_UUID_KINACCEL_CHAR   0x1625
 
 // Forward declaration of the mpu_service_t type.
 typedef struct mpu_service_s mpu_service_t;
@@ -51,19 +52,20 @@ typedef struct mpu_service_s mpu_service_t;
 /**@brief MPU Service structure. This structure contains various status information for the service. */
 struct mpu_service_s
 {
-    uint16_t                    service_handle;      /**< Handle of MPU Service (as provided by the BLE stack). */
-    ble_gatts_char_handles_t    quat_char_handles;   /**< Handles related to the Quaternion Characteristic. */
-    uint8_t                     uuid_type;           /**< UUID type for the MPU Service. */
+    uint16_t                    service_handle;        /**< Handle of MPU Service (as provided by the BLE stack). */
+    ble_gatts_char_handles_t    quat_char_handles;     /**< Handles related to the Quaternion Characteristic. */
+    ble_gatts_char_handles_t    kinaccel_char_handles; /**< Handles related to the Kinematic Acceleration Characteristic. */
+    uint8_t                     uuid_type;             /**< UUID type for the MPU Service. */
 };
 
-/**@brief Function for adding the Quaternion Characteristic.
+/**@brief Function for adding all the MPU characteristic.
  *
- * @param[in] p_mpu_service      Haptic Service structure.
- *
- * @retval NRF_SUCCESS on success, else an error value from the SoftDevice
+ * @param[in] p_mpu_service      MPU Service structure.
  */
-uint32_t quat_char_add(mpu_service_t * p_mpu_service)
+static void mpu_char_add(mpu_service_t * p_mpu_service)
 {
+    uint32_t   err_code;
+
     ble_gatts_char_md_t char_md;
     ble_gatts_attr_md_t cccd_md;
     ble_gatts_attr_t    attr_char_value;
@@ -102,15 +104,26 @@ uint32_t quat_char_add(mpu_service_t * p_mpu_service)
 
     attr_char_value.p_uuid    = &ble_uuid;
     attr_char_value.p_attr_md = &attr_md;
-    attr_char_value.init_len  = 16*sizeof(uint8_t); // 4*sizeof(float);
+    attr_char_value.init_len  = 16; // 4*sizeof(float);
     attr_char_value.init_offs = 0;
-    attr_char_value.max_len   = 16*sizeof(uint8_t); // 4*sizeof(float);
+    attr_char_value.max_len   = 16; // 4*sizeof(float);
     attr_char_value.p_value   = NULL;
 
-    return sd_ble_gatts_characteristic_add(p_mpu_service->service_handle,
+    err_code = sd_ble_gatts_characteristic_add(p_mpu_service->service_handle,
                                            &char_md,
                                            &attr_char_value,
                                            &p_mpu_service->quat_char_handles);
+    VERIFY_SUCCESS(err_code);
+
+
+    ble_uuid.uuid = MPU_SERVICE_UUID_KINACCEL_CHAR;
+    attr_char_value.init_len  = 12; // 3*sizeof(float);
+    attr_char_value.max_len   = 12; // 3*sizeof(float);
+    err_code = sd_ble_gatts_characteristic_add(p_mpu_service->service_handle,
+                                           &char_md,
+                                           &attr_char_value,
+                                           &p_mpu_service->kinaccel_char_handles);
+    VERIFY_SUCCESS(err_code);
 }
 
 /**@brief Function for initializing the MPU Service.
@@ -139,8 +152,7 @@ uint32_t mpu_service_init(mpu_service_t * p_mpu_service)
     VERIFY_SUCCESS(err_code);
 
     // Add characteristics.
-    err_code = quat_char_add(p_mpu_service);
-    VERIFY_SUCCESS(err_code);
+    mpu_char_add(p_mpu_service);
 
     return NRF_SUCCESS;
 }
@@ -170,26 +182,64 @@ void mpu_service_on_ble_evt(ble_evt_t const * p_ble_evt, void * p_context)
  *
  ' @param[in] conn_handle   Handle of the peripheral connection to which the button state notification will be sent.
  * @param[in] p_mpu_service         MPU Service structure.
- * @param[in] q0     Quaternion component.
- * @param[in] q1     Quaternion component.
- * @param[in] q2     Quaternion component.
- * @param[in] q3     Quaternion component.
+ * @param[in] q[]      Quaternion components.
+ * @param[in] ka[]     Kinematic acceleration component.
  *
  * @retval NRF_SUCCESS If the notification was sent successfully. Otherwise, an error code is returned.
  */
-uint32_t mpu_service_on_orientation_change(uint16_t conn_handle, mpu_service_t * p_mpu_service, float q0, float q1, float q2, float q3)
+uint32_t mpu_service_on_orientation_change(uint16_t conn_handle, mpu_service_t * p_mpu_service, float q0, float q1, float q2, float q3, float kax, float kay, float kaz)
 {
-    ble_gatts_hvx_params_t params;
-    uint16_t len = 16;
-    static float buffer[4]; // 4 32-bit floats is 16 uint8s
-    buffer[0]=q0; buffer[1]=q1; buffer[2]=q2; buffer[3]=q3;
+    uint32_t   err_code;
+
+    ble_gatts_hvx_params_t paramsq;
+    uint16_t lenq = 16;
+    static float bufferq[4];
+    bufferq[0]=q0; bufferq[1]=q1; bufferq[2]=q2; bufferq[3]=q3;
     
-    memset(&params, 0, sizeof(params));
-    params.type   = BLE_GATT_HVX_NOTIFICATION;
-    params.handle = p_mpu_service->quat_char_handles.value_handle;
-    params.p_data = (uint8_t*)&buffer;
-    params.p_len  = &len;
-    return sd_ble_gatts_hvx(conn_handle, &params);
+    memset(&paramsq, 0, sizeof(paramsq));
+    paramsq.type   = BLE_GATT_HVX_NOTIFICATION;
+    paramsq.handle = p_mpu_service->quat_char_handles.value_handle;
+    paramsq.p_data = (uint8_t*)&bufferq;
+    paramsq.p_len  = &lenq;
+    err_code = sd_ble_gatts_hvx(conn_handle, &paramsq);
+    if (err_code != NRF_SUCCESS &&
+        err_code != BLE_ERROR_INVALID_CONN_HANDLE &&
+        err_code != NRF_ERROR_INVALID_STATE &&
+        err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
+    {
+        if (err_code == NRF_ERROR_RESOURCES)
+        {
+            NRF_LOG_DEBUG("Not enough resources to send q[]");
+        } else
+        {
+            APP_ERROR_CHECK(err_code);
+        }
+    }
+
+    ble_gatts_hvx_params_t paramsk;
+    uint16_t lenk = 12;
+    static float bufferk[3];
+    bufferk[0]=kax; bufferk[1]=kay; bufferk[2]=kaz;;
+    
+    memset(&paramsk, 0, sizeof(paramsk));
+    paramsk.type   = BLE_GATT_HVX_NOTIFICATION;
+    paramsk.handle = p_mpu_service->kinaccel_char_handles.value_handle;
+    paramsk.p_data = (uint8_t*)&bufferk;
+    paramsk.p_len  = &lenk;
+    err_code = sd_ble_gatts_hvx(conn_handle, &paramsk);
+    if (err_code != NRF_SUCCESS &&
+        err_code != BLE_ERROR_INVALID_CONN_HANDLE &&
+        err_code != NRF_ERROR_INVALID_STATE &&
+        err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
+    {
+        if (err_code == NRF_ERROR_RESOURCES)
+        {
+            NRF_LOG_DEBUG("Not enough resources to send ka[]");
+        } else {
+            APP_ERROR_CHECK(err_code);
+        }
+    }
+
 }
 
 

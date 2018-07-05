@@ -18,7 +18,7 @@
 
 extern volatile float beta;				// algorithm gain
 extern volatile float q0, q1, q2, q3;	// quaternion of sensor frame relative to auxiliary frame
-
+extern volatile float kax, kay, kaz;    // kinematic acceleration (without gravity) based on the current estimate for the orientation
 //---------------------------------------------------------------------------------------------------
 // Function declarations
 

@@ -4,6 +4,7 @@
  * This file contains the source code for a sample server application using the LED Button service.
  */
 
+// TODO do not attempt notifications in the callbacks unless we are actually connected
 // TODO move to nrfx namespace instead of nrf_drv (waiting on multiple nordic libraries)
 // TODO a bunch of unnecessary headers are included or listed in config, remove them
 // TODO most of the APP_ERROR_CHECK might need to become VERIFY_SUCCESS (from sdk_macros.h) and the error handler for APP_ERROR_CHECK might need changing
@@ -655,6 +656,7 @@ static void services_init(void)
     nrf_ble_qwr_init_t qwr_init = {0};
     ble_bas_init_t     bas_init;
 
+    // TODO Ugh... what is this Queued Write module for...
     // Initialize Queued Write Module.
     qwr_init.error_handler = nrf_qwr_error_handler;
 
