@@ -96,6 +96,7 @@
       <file file_name="../../../mpu.h" />
       <file file_name="../../../MadgwickAHRS.c" />
       <file file_name="../../../MadgwickAHRS.h" />
+      <file file_name="../../../mpu_service.h" />
     </folder>
     <folder Name="nRF_Segger_RTT">
       <file file_name="../../../../../../external/segger_rtt/SEGGER_RTT.c" />

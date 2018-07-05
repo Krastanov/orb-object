@@ -46,15 +46,23 @@
 
 #include "mpu.h"
 
-#define MPU_SCL  6
-#define MPU_SDA  4
-#define MPU_IRQ  3
+//===========================
+// Hardware pins
+//===========================
+
+#define MPU_SCL  11
+#define MPU_SDA  12
+#define MPU_IRQ  16
 
 #define MODULAR_BUTTON                  18
  
 #define MOTOR                             8
 
 #define BATTERY_AIN                     NRF_SAADC_INPUT_AIN3
+
+//===========================
+// Bluetooth configuration
+//===========================
 
 #define DEVICE_NAME                     "Orb"                                   /**< Name of device. Will be included in the advertising data. */
 
@@ -73,15 +81,21 @@
 #define NEXT_CONN_PARAMS_UPDATE_DELAY   APP_TIMER_TICKS(5000)                   /**< Time between each call to sd_ble_gap_conn_param_update after the first call (5 seconds). */
 #define MAX_CONN_PARAMS_UPDATE_COUNT    3                                       /**< Number of attempts before giving up the connection parameter negotiation. */
 
-#define BUTTON_DETECTION_DELAY          APP_TIMER_TICKS(50)                     /**< Delay from a GPIOTE event until a button is reported as pushed (in number of timer ticks). */
-
-#define BATTERY_LEVEL_MEAS_INTERVAL     APP_TIMER_TICKS(60000)                  /**< Battery level measurement interval (ticks). */
-
-#define BATTERY_420mV                   170
-
 #define DEAD_BEEF                       0xDEADBEEF                              /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
-APP_TIMER_DEF(m_battery_timer_id);                                              /**< Battery timer. */
+//===========================
+// Configuration for various services
+//===========================
+
+#define BUTTON_DETECTION_DELAY          APP_TIMER_TICKS(50)                     /**< Delay from a GPIOTE event until a button is reported as pushed (in number of timer ticks). */
+#define BATTERY_LEVEL_MEAS_INTERVAL     APP_TIMER_TICKS(60000)                  /**< Battery level measurement interval (ticks). */
+#define BATTERY_420mV                   170
+
+#define MPU_NOTIFICATION_INTERVAL       APP_TIMER_TICKS(200)                    /**< MPU BLE notification interval (ticks). */
+
+
+APP_TIMER_DEF(m_battery_timer_id);                                              /**< Battery measurement and BLE notification timer. */
+APP_TIMER_DEF(m_mpu_notification_timer_id);                                     /**< MPU BLE notification timer. */
 
 HAPTIC_SERVICE_DEF(m_haptic_service);                                           /**< Haptic Service instance. */
 BLE_BAS_DEF(m_bas);                                                             /**< Battery Service instance. */
@@ -94,11 +108,12 @@ NRF_BLE_QWR_DEF(m_qwr);                                                         
 
 static nrfx_pwm_t m_pwm = NRFX_PWM_INSTANCE(0);
 
-static ble_uuid_t m_adv_uuids[] =                                               /**< Universally unique service identifiers. */
+static ble_uuid_t m_adv_uuids[] =                                               /**< Universally unique service identifiers that are advertised. */
 {
-    {BLE_UUID_BATTERY_SERVICE,            BLE_UUID_TYPE_BLE},
-    {HAPTIC_SERVICE_UUID_SERVICE,         BLE_UUID_TYPE_VENDOR_BEGIN}
-//    {BLE_UUID_DEVICE_INFORMATION_SERVICE, BLE_UUID_TYPE_BLE}
+//    {BLE_UUID_BATTERY_SERVICE,            BLE_UUID_TYPE_BLE},
+//    {HAPTIC_SERVICE_UUID_SERVICE,         BLE_UUID_TYPE_VENDOR_BEGIN},
+//    {MPU_SERVICE_UUID_SERVICE,            BLE_UUID_TYPE_VENDOR_BEGIN},
+    {BLE_UUID_DEVICE_INFORMATION_SERVICE, BLE_UUID_TYPE_BLE}
 };
 
 static uint16_t m_conn_handle = BLE_CONN_HANDLE_INVALID;                        /**< Handle of the current connection. */
@@ -537,6 +552,7 @@ static void battery_level_meas_timeout_handler(void * p_context)
 {
     UNUSED_PARAMETER(p_context);
     battery_level_update();
+    NRF_LOG_DEBUG("bat %d", m_conn_handle);
 }
 
 
@@ -645,7 +661,7 @@ static void services_init(void)
     err_code = nrf_ble_qwr_init(&m_qwr, &qwr_init);
     APP_ERROR_CHECK(err_code);
 
-    // Initialize HAPTIC_SERVICE.
+    // Initialize Haptic Service.
     init.motor_write_handler = motor_write_handler;
 
     err_code = haptic_service_init(&m_haptic_service, &init);
@@ -686,7 +702,10 @@ static void timers_init(void)
                                 APP_TIMER_MODE_REPEATED,
                                 battery_level_meas_timeout_handler);
     APP_ERROR_CHECK(err_code);
-
+    err_code = app_timer_create(&m_mpu_notification_timer_id, // TODO this time should not be necessary, this should be a callback, but there is a bit of a problem with relative priorities.
+                                APP_TIMER_MODE_REPEATED,
+                                mpu_ble_notification);
+    APP_ERROR_CHECK(err_code);
 }
 
 
@@ -698,6 +717,8 @@ static void application_timers_start(void)
 
     // Start application timers.
     err_code = app_timer_start(m_battery_timer_id, BATTERY_LEVEL_MEAS_INTERVAL, NULL);
+    APP_ERROR_CHECK(err_code);
+    err_code = app_timer_start(m_mpu_notification_timer_id, MPU_NOTIFICATION_INTERVAL, (void*)&m_conn_handle);
     APP_ERROR_CHECK(err_code);
 }
 
@@ -752,25 +773,30 @@ int main(void)
 {
     // Initialize.
     log_init();
-    motor_init();
     timers_init();
+
+    motor_init();
     buttons_init();
     pwm_init();
     saadc_init();
+    nfc_init();
+
     power_management_init();
+
     ble_stack_init();
     gap_params_init();
     gatt_init();
+
     services_init();
+    mpu_init(MPU_SCL, MPU_SDA, MPU_IRQ); // TODO This includes TWI init and BLE service init. The MPU driver needs to become a bit more modular if other TWI devices are to be added or advanced BLE configuration is to be used.
+
     advertising_init();
     conn_params_init();
-    application_timers_start();
-    nfc_init();
-    mpu_init(MPU_SCL, MPU_SDA, MPU_IRQ);
 
     // Start execution.
-    NRF_LOG_INFO("Orb started.");
+    application_timers_start();
     advertising_start();
+    NRF_LOG_INFO("Orb started.");
 
     // Enter main loop.
     for (;;)

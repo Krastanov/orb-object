@@ -1,9 +1,16 @@
+/**
+ * @brief MPU driver and BLE interface.
+ *
+ * The MPU driver is implemented here. Calls to the sensor fusion algorithms are done here. Call to BLE notification handlers are done here. The code is tightly coubled, not meant to be reusable.
+ */
+
 #include "nrfx_twim.h"
 #include "nrf_twi_sensor.h"
 #include "nrf_log.h"
 #include "nrf_delay.h"
 #include "nrfx_gpiote.h"
 #include "MadgwickAHRS.h"
+#include "mpu_service.h"
 
 #define MPU_ADDR 0b1101001
 
@@ -75,21 +82,25 @@ static const uint8_t Ascale = AFS_2G;
 static const uint8_t Mscale = MFS_16BITS; // Choose either 14-bit or 16-bit magnetometer resolution
 
 // TODO verify these experimentally... there is definitely something wrong with the a (it is off by a factor of 2)
-static const float gres = 250.0/32768.0*3.1415/180; // in units of rad/s
-static const float ares = 2.0/32768.0; // in units of g
+// TODO in the name of all that is holly and satanic, why is there a factor of two here!?
+static const float gres = 250.0/32768.0*3.1415/180*2; // in units of rad/s
+static const float ares = 2.0/32768.0*2; // in units of g
 static const float mres = 0.15; // in units of uTesla
 
 static const uint8_t Mmode = 0x06; // 2 for 8 Hz, 6 for 100 Hz continuous magnetometer data read
 
 static uint8_t sens_buffer[MPU_SENS_SIZE];  /**< Buffer for all sensor data (accel, temp, gyro, mag). */ // TODO explain why this is not volatile.
-static float magcalibration[3]; // Calibration values for the magnetometer. // TODO use them.
+static float magcalibration[3]; // Calibration values for the magnetometer.
 
 static volatile float gx, gy, gz, ax, ay, az, mx, my, mz;
 
 NRF_TWI_MNGR_DEF(m_twi_mngr, 4, 0);         /**< TWI transaction manager.*/
 NRF_TWI_SENSOR_DEF(m_mpu, &m_twi_mngr, 30); /**< TWI Sensor instance.*/
 
-void fusion_accel_gyro() // This is expected to be invoked at 100Hz, interleaved with `fusion_accel_gyro_mag`
+// MPU BLE Service instance, to be initilized in mpu_init
+MPU_SERVICE_DEF(m_mpu_service);
+
+static void fusion_accel_gyro() // This is expected to be invoked at 100Hz, interleaved with `fusion_accel_gyro_mag`
 {
     ax = ((int16_t)((int16_t)sens_buffer[ 0] << 8 | sens_buffer[ 1]))*ares;
     ay = ((int16_t)((int16_t)sens_buffer[ 2] << 8 | sens_buffer[ 3]))*ares;
@@ -100,7 +111,7 @@ void fusion_accel_gyro() // This is expected to be invoked at 100Hz, interleaved
     MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
 }
 
-void fusion_accel_gyro_mag() // This is expected to be invoked at 100Hz, interleaved with `fusion_accel_gyro`
+static void fusion_accel_gyro_mag() // This is expected to be invoked at 100Hz, interleaved with `fusion_accel_gyro`
 {
     ax = ((int16_t)((int16_t)sens_buffer[ 0] << 8 | sens_buffer[ 1]))*ares;
     ay = ((int16_t)((int16_t)sens_buffer[ 2] << 8 | sens_buffer[ 3]))*ares;
@@ -126,14 +137,14 @@ void fusion_accel_gyro_mag() // This is expected to be invoked at 100Hz, interle
         //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(mx), sens_buffer[15], sens_buffer[14]);
         //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(my), sens_buffer[17], sens_buffer[16]);
         //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(mz), sens_buffer[19], sens_buffer[18]);
-        NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(q0));
+        //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(q0));
         i=0;
     }
 }
 
 /**@brief Check the AK8963 readings. Call sensor fusion accordingly. To be set as callback from inside check_mag_ready_cb. If this is not fast, everything breaks.
  */
-void read_mag_cb(ret_code_t result, void* p_register_data)
+static void read_mag_cb(ret_code_t result, void* p_register_data)
 {
     APP_ERROR_CHECK(result);
     uint8_t* data = (uint8_t*)p_register_data;
@@ -148,7 +159,7 @@ void read_mag_cb(ret_code_t result, void* p_register_data)
 
 /**@brief Check if the AK8963 said it is ready. Read it and call sensor fusion accordingly. To be set as callback from inside mpu_read_and_fuse_sensors. If this is not fast, everything breaks.
  */
-void check_mag_ready_cb(ret_code_t result, void* p_register_data)
+static void check_mag_ready_cb(ret_code_t result, void* p_register_data)
 {
     APP_ERROR_CHECK(result);
     uint8_t status = ((uint8_t*)p_register_data)[0] & 0x01;
@@ -165,7 +176,7 @@ void check_mag_ready_cb(ret_code_t result, void* p_register_data)
 
 /**@brief Read all sensor data from the MPU9250. To be called from interrupt.
  */
-void mpu_read_and_fuse_sensors()
+static void mpu_read_and_fuse_sensors()
 {
     // read accel/gyro
     // check mag
@@ -178,9 +189,26 @@ void mpu_read_and_fuse_sensors()
     APP_ERROR_CHECK(err_code);
 }
 
-void irq_callback(nrfx_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
+/**@brief Call whenvever the MPU9250's INT pin is triggered.
+ */
+static void irq_callback(nrfx_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
 {
     mpu_read_and_fuse_sensors();
+}
+
+/**@brief Trigger a BLE notification. Needs to be called from a timer in main.c. The p_context contains the connection handle.
+ */
+void mpu_ble_notification(void * p_context)
+{
+    ret_code_t err_code;
+    err_code = mpu_service_on_orientation_change(*(uint16_t*)p_context, &m_mpu_service, q0, q1, q2, q3);
+    if (err_code != NRF_SUCCESS &&
+        err_code != BLE_ERROR_INVALID_CONN_HANDLE &&
+        err_code != NRF_ERROR_INVALID_STATE &&
+        err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
+    {
+        APP_ERROR_CHECK(err_code);
+    }
 }
 
 // For use only inside mpu_init!
@@ -207,7 +235,7 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq) // based on github.com/kris
         .scl                = scl,
         .sda                = sda,
         .frequency          = NRF_TWI_FREQ_400K,
-        .interrupt_priority = APP_IRQ_PRIORITY_HIGHEST,
+        .interrupt_priority = APP_IRQ_PRIORITY_HIGHEST, // TODO this might be too low
         .hold_bus_uninit    = true
     };
     nrfx_twim_init(&twi_master, &config, NULL, NULL);
@@ -348,7 +376,13 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq) // based on github.com/kris
     APP_ERROR_CHECK(err_code);
     nrfx_gpiote_in_event_enable(irq, true);
     mpu_read_and_fuse_sensors();
-    NRF_LOG_DEBUG("Done");
+    NRF_LOG_DEBUG("MPU init done.");
+
+
+
+    // Initialize the BLE services.
+    // TODO decouple the BLE MPU service from the MPU driver from the Sensor fusion.
+    mpu_service_init(&m_mpu_service);
 }
 
 // TODO make the following convenience functions
