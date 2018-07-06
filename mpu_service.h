@@ -188,7 +188,7 @@ void mpu_service_on_ble_evt(ble_evt_t const * p_ble_evt, void * p_context)
  * @retval NRF_SUCCESS If the notification was sent successfully. Otherwise, an error code is returned.
  */
 uint32_t mpu_service_on_orientation_change(uint16_t conn_handle, mpu_service_t * p_mpu_service, float q0, float q1, float q2, float q3, float kax, float kay, float kaz)
-{
+{ // TODO This should be sending bytes, not floats. It is waste of resources to send 32bits per number.
     uint32_t   err_code;
 
     ble_gatts_hvx_params_t paramsq;

@@ -54,6 +54,14 @@
 #define MAG_ZOUT_H 0x08
 #define MAG_ST2 0x09 // Data overflow bit 3 and data read error status bit 2
 
+#define MAXMX  68.44 // TODO these should be programatically accessible
+#define MINMX -28.77
+#define MAXMY  31.98
+#define MINMY -61.47
+#define MAXMZ  58.05
+#define MINMZ -36.86
+
+
 enum Ascale
 {
   AFS_2G = 0,
@@ -83,7 +91,7 @@ static const uint8_t Mscale = MFS_16BITS; // Choose either 14-bit or 16-bit magn
 
 // TODO verify these experimentally... there is definitely something wrong with the a (it is off by a factor of 2)
 // TODO in the name of all that is holly and satanic, why is there a factor of two here!?
-static const float gres = 250.0/32768.0*3.1415/180*2; // in units of rad/s
+static const float gres = 250.0/32768.0*3.1415/180; // in units of rad/s
 static const float ares = 2.0/32768.0*2; // in units of g
 static const float mres = 0.15; // in units of uTesla
 
@@ -92,7 +100,7 @@ static const uint8_t Mmode = 0x06; // 2 for 8 Hz, 6 for 100 Hz continuous magnet
 static uint8_t sens_buffer[MPU_SENS_SIZE];  /**< Buffer for all sensor data (accel, temp, gyro, mag). */ // TODO explain why this is not volatile.
 static float magcalibration[3]; // Calibration values for the magnetometer.
 
-static volatile float gx, gy, gz, ax, ay, az, mx, my, mz;
+static float gx, gy, gz, ax, ay, az, mx, my, mz; // TODO explain why it is not volatile
 
 NRF_TWI_MNGR_DEF(m_twi_mngr, 4, 0);         /**< TWI transaction manager.*/
 NRF_TWI_SENSOR_DEF(m_mpu, &m_twi_mngr, 30); /**< TWI Sensor instance.*/
@@ -100,6 +108,64 @@ NRF_TWI_SENSOR_DEF(m_mpu, &m_twi_mngr, 30); /**< TWI Sensor instance.*/
 // MPU BLE Service instance, to be initilized in mpu_init
 MPU_SERVICE_DEF(m_mpu_service);
 
+/**@brief Measure and remove bias on the fly. Returns 1 if the magnetometer is not ready.
+ */
+static uint32_t remove_bias(float* ax, float* ay, float* az, float* gx, float* gy, float* gz, float* mx, float* my, float* mz)
+{ // TODO work with ints instead of floats to make this faster
+    // TODO calibrate accelerometer too
+    static float gxdrift = 0, gydrift = 0, gzdrift = 0;
+    static float lastax = 0, lastay = 0, lastaz = 0;
+    float diff = (lastax - *ax)*(lastax - *ax) + (lastay - *ay)*(lastay - *ay) + (lastaz - *az)*(lastaz - *az);
+    lastax = *ax;
+    lastay = *ay;
+    lastaz = *az;
+    //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(diff*1e6));
+    if (diff < 10e-6) // TODO This cutoff value might need adjustment itself.
+    {
+        gxdrift = 0.99*gxdrift + 0.01* *gx;
+        gydrift = 0.99*gydrift + 0.01* *gy;
+        gzdrift = 0.99*gzdrift + 0.01* *gz;
+    }
+    *gx -= gxdrift;
+    *gy -= gydrift;
+    *gz -= gzdrift;
+
+    if (mx==NULL) return 1;
+
+    static uint16_t big_g_count = 0; // how many times a large rotation was observed 
+    static float maxmx = MAXMX, minmx = MINMX, maxmy = MAXMY, minmy = MINMY, maxmz = MAXMZ, minmz = MINMZ;
+    if (big_g_count < 30000)
+    {
+        if (maxmx<*mx) maxmx=*mx;
+        if (minmx>*mx) minmx=*mx;
+        if (maxmy<*my) maxmy=*my;
+        if (minmy>*my) minmy=*my;
+        if (maxmz<*mz) maxmz=*mz;
+        if (minmz>*mz) minmz=*mz;
+        if (*gx * *gx + *gy * *gy + *gz * *gz > 1) big_g_count++;
+    }
+    if (big_g_count > 100)
+    {
+        //NRF_LOG_DEBUG("magnitude " NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(*mx * *mx + *my * *my + *mz * *mz));
+        //NRF_LOG_DEBUG("mx max min " NRF_LOG_FLOAT_MARKER " " NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(maxmx), NRF_LOG_FLOAT(minmx));
+        //NRF_LOG_DEBUG("my max min " NRF_LOG_FLOAT_MARKER " " NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(maxmy), NRF_LOG_FLOAT(minmy));
+        //NRF_LOG_DEBUG("mz max min " NRF_LOG_FLOAT_MARKER " " NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(maxmz), NRF_LOG_FLOAT(minmz));
+        //NRF_LOG_DEBUG("mx center scale " NRF_LOG_FLOAT_MARKER " " NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT((maxmx+minmx)/2), NRF_LOG_FLOAT((maxmx-minmx)/2));
+        //NRF_LOG_DEBUG("my center scale " NRF_LOG_FLOAT_MARKER " " NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT((maxmy+minmy)/2), NRF_LOG_FLOAT((maxmy-minmy)/2));
+        //NRF_LOG_DEBUG("mz center scale " NRF_LOG_FLOAT_MARKER " " NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT((maxmz+minmz)/2), NRF_LOG_FLOAT((maxmz-minmz)/2));
+        float avg = ((maxmx-minmx)+(maxmy-minmy)+(maxmz-minmz))/3;
+        *mx = (*mx - (maxmx+minmx)/2) * avg / (maxmx-minmx);
+        *my = (*my - (maxmy+minmy)/2) * avg / (maxmy-minmy);
+        *mz = (*mz - (maxmz+minmz)/2) * avg / (maxmz-minmz);
+        //NRF_LOG_DEBUG("magnitude debiased " NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(*mx * *mx + *my * *my + *mz * *mz));
+        return 0;
+    } else {
+        return 1;
+    }
+}
+
+/**@brief Use the accel, gyro, and compas values from the sensor buffer to run sensor fusion. It performs simple bias removal.
+ */
 static void fusion_accel_gyro_mag() // This is expected to be invoked at 100Hz, interleaved with `fusion_accel_gyro`
 {
     ax = ((int16_t)((int16_t)sens_buffer[ 0] << 8 | sens_buffer[ 1]))*ares;
@@ -111,9 +177,10 @@ static void fusion_accel_gyro_mag() // This is expected to be invoked at 100Hz, 
     my = ((int16_t)((int16_t)sens_buffer[15] << 8 | sens_buffer[14]))*magcalibration[0];
     mx = ((int16_t)((int16_t)sens_buffer[17] << 8 | sens_buffer[16]))*magcalibration[1];
     mz =-((int16_t)((int16_t)sens_buffer[19] << 8 | sens_buffer[18]))*magcalibration[2];
-    // TODO the local magnetic fields need to be substracted from mx/y/z before it is useful.
-    //MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
-    MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
+    uint32_t mag_status;
+    mag_status = remove_bias(&ax, &ay, &az, &gx, &gy, &gz, &mx, &my, &mz);
+    if (mag_status==0) MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
+    else MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
     static int i = 0;
     i++;
     if (i==20){
@@ -137,6 +204,8 @@ static void fusion_accel_gyro_mag() // This is expected to be invoked at 100Hz, 
     }
 }
 
+/**@brief Use the accel and gyro values from the sensor buffer to run sensor fusion. It performs simple bias removal.
+ */
 static void fusion_accel_gyro() // This is expected to be invoked at 100Hz, interleaved with `fusion_accel_gyro_mag`
 {
     ax = ((int16_t)((int16_t)sens_buffer[ 0] << 8 | sens_buffer[ 1]))*ares;
@@ -145,6 +214,7 @@ static void fusion_accel_gyro() // This is expected to be invoked at 100Hz, inte
     gx = ((int16_t)((int16_t)sens_buffer[ 8] << 8 | sens_buffer[ 9]))*gres;
     gy = ((int16_t)((int16_t)sens_buffer[10] << 8 | sens_buffer[11]))*gres;
     gz = ((int16_t)((int16_t)sens_buffer[12] << 8 | sens_buffer[13]))*gres;
+    remove_bias(&ax, &ay, &az, &gx, &gy, &gz, NULL, NULL, NULL);
     MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
 }
 
@@ -222,7 +292,6 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq) // based on github.com/kris
     // TODO use DPM and/or FIFO
     // TODO set low-pass filter
     // TODO self test for accel/gyro/mag
-    // TODO calibrate biases for accel/gyro/mag
 
     ret_code_t err_code;
     uint8_t buffer[2];
@@ -385,26 +454,26 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq) // based on github.com/kris
 
 // TODO make the following convenience functions
 
-// TODO general read/write functions
+//  general read/write functions
 
-// TODO set accel, gyro range
+//  set accel, gyro range
 
-// TODO set mag precision
+//  set mag precision
 
-// TODO set filter
+//  set filter
 
-// TODO set sample rate
+//  set sample rate
 
-// TODO check self-test results for accel and gyro
+//  check self-test results for accel and gyro
 
-// TODO check self-test results for magnetometer
+//  check self-test results for magnetometer
 
-// TODO set accel and gyro bias (self-calibration when charging as the orientation will be known)
+//  set accel and gyro bias (self-calibration when charging as the orientation will be known)
 
-// TODO set magnetometer bias
+//  set magnetometer bias
 
-// TODO set FIFO (default off, but using it at appropriate frequency would make the predictions more stable as otherwise the code has strong timing requirements)
+//  set FIFO (default off, but using it at appropriate frequency would make the predictions more stable as otherwise the code has strong timing requirements)
 // register 26.6, 35
 
-// TODO wake on motion
+//  wake on motion
 // register 31
