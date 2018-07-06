@@ -781,7 +781,6 @@ int main(void)
     buttons_init();
     pwm_init();
     saadc_init();
-    nfc_init();
 
     power_management_init();
 
@@ -794,6 +793,7 @@ int main(void)
 
     advertising_init();
     conn_params_init();
+    nfc_init();
 
     // Start execution.
     application_timers_start();
