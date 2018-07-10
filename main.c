@@ -47,6 +47,8 @@
 
 #include "mpu.h"
 
+#include "ws2812.h"
+
 //===========================
 // Hardware pins
 //===========================
@@ -54,6 +56,10 @@
 #define MPU_SCL  11
 #define MPU_SDA  12
 #define MPU_IRQ  16
+
+#define WS2812_LED      3
+#define WS2812_UNUSED1 18
+#define WS2812_UNUSED2 19
 
 #define MODULAR_BUTTON                  18
  
@@ -789,8 +795,9 @@ int main(void)
     gatt_init();
 
     services_init();
+    ws2812_init(WS2812_LED,WS2812_UNUSED1,WS2812_UNUSED2);
     mpu_init(MPU_SCL, MPU_SDA, MPU_IRQ); // TODO This includes TWI init and BLE service init. The MPU driver needs to become a bit more modular if other TWI devices are to be added or advanced BLE configuration is to be used.
-
+    
     advertising_init();
     conn_params_init();
     nfc_init();
