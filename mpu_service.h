@@ -131,7 +131,6 @@ static void mpu_char_add(mpu_service_t * p_mpu_service)
  * @param[out] p_mpu_service      MPU Service structure. This structure must be supplied by
  *                        the application. It is initialized by this function and will later
  *                        be used to identify this particular service instance.
- * @param[in] p_mpu_service_init  Information needed to initialize the service.
  *
  * @retval NRF_SUCCESS If the service was initialized successfully. Otherwise, an error code is returned.
  */

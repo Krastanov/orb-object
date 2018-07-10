@@ -8,6 +8,8 @@
 // TODO move to nrfx namespace instead of nrf_drv (waiting on multiple nordic libraries)
 // TODO a bunch of unnecessary headers are included or listed in config, remove them
 // TODO most of the APP_ERROR_CHECK might need to become VERIFY_SUCCESS (from sdk_macros.h) and the error handler for APP_ERROR_CHECK might need changing
+// TODO go with a fine comb over the definitions of each characteristic (in the characteristic add functions)
+// TODO turn write characteristics to no-response-write
 
 #include <stdint.h>
 #include <string.h>
@@ -652,7 +654,6 @@ static void nrf_qwr_error_handler(uint32_t nrf_error)
     APP_ERROR_HANDLER(nrf_error);
 }
 
-
 /**@brief Function for initializing services that will be used by the application.
  */
 static void services_init(void)
@@ -795,7 +796,7 @@ int main(void)
     gatt_init();
 
     services_init();
-    ws2812_init(WS2812_LED,WS2812_UNUSED1,WS2812_UNUSED2);
+    ws2812_init(WS2812_LED,WS2812_UNUSED1,WS2812_UNUSED2); // TODO This includes I2S init and BLE service init. The WS2812 driver needs to become a bit more modular.
     mpu_init(MPU_SCL, MPU_SDA, MPU_IRQ); // TODO This includes TWI init and BLE service init. The MPU driver needs to become a bit more modular if other TWI devices are to be added or advanced BLE configuration is to be used.
     
     advertising_init();

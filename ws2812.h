@@ -1,10 +1,11 @@
 /**
  * @brief WS2812B driver.
  *
- * The WS2812B/NeoPixel driver is implemented here. It is abusing the i2s hardware on the nrf52 chip.
+ * The WS2812B/NeoPixel driver is implemented here. It is abusing the i2s hardware on the nrf52 chip. The BLE characteristic is also called from here - the code is tightly coupled and not particularly reusable.
  */
 
 #include "nrfx_i2s.h"
+#include "ws2812_service.h"
 
 #define NLEDS 7  // TODO this should be accessible in the init function
 #define RESET_BITS 6
@@ -12,6 +13,7 @@
 
 static uint32_t buffer_tx[I2S_BUFFER_SIZE]; // TODO should be allocated in the init function
 static nrfx_i2s_buffers_t buffers = {.p_rx_buffer = NULL, .p_tx_buffer = buffer_tx};
+WS2812_SERVICE_DEF(m_ws2812_service);
 
 static void data_handler(nrfx_i2s_buffers_t const * p_released, uint32_t status)
 {
@@ -20,24 +22,6 @@ static void data_handler(nrfx_i2s_buffers_t const * p_released, uint32_t status)
         nrfx_i2s_stop();
     }
 }
-
-void ws2812_init(uint8_t outpin, uint8_t unused_sckpin, uint8_t unused_lrckpin) // TODO the unused_* pins are a very annoying leaky abstraction over this i2s hack
-{
-    ret_code_t err_code;
-
-    nrfx_i2s_config_t config = NRFX_I2S_DEFAULT_CONFIG;
-    config.sdin_pin  = NRFX_I2S_PIN_NOT_USED;
-    config.sdout_pin = outpin;
-    config.sck_pin   = unused_sckpin;
-    config.lrck_pin  = unused_lrckpin;
-    config.mck_setup = NRF_I2S_MCK_32MDIV10; ///< 32 MHz / 10 = 3.2 MHz.
-    config.ratio     = NRF_I2S_RATIO_32X;    ///< LRCK = MCK / 32.
-    config.channels  = NRF_I2S_CHANNELS_STEREO;
-
-    err_code = nrfx_i2s_init(&config, data_handler);
-    APP_ERROR_CHECK(err_code);
-}
-
 
 static uint32_t encode8to32(uint8_t level) // 1 is 1110, 0 is 1000
 {
@@ -66,7 +50,6 @@ static uint32_t encode8to32(uint8_t level) // 1 is 1110, 0 is 1000
     return val;
 }
 
-
 void ws2812_set_color(uint8_t pixel, uint8_t r, uint8_t g, uint8_t b)
 {
     if (pixel>=NLEDS) return;
@@ -83,6 +66,38 @@ void ws2812_clear_buffer()
 uint32_t ws2812_display()
 {
     return nrfx_i2s_start(&buffers, I2S_BUFFER_SIZE, 0);
+}
+
+void ws2812_set_uniform_color_and_display(uint8_t const * rgb)
+{
+    for (uint8_t i=0; i<NLEDS; i++)
+    {
+        buffer_tx[3*i]   = encode8to32(rgb[1]);
+        buffer_tx[3*i+1] = encode8to32(rgb[0]);
+        buffer_tx[3*i+2] = encode8to32(rgb[2]);
+    }
+    ws2812_display();
+}
+
+void ws2812_init(uint8_t outpin, uint8_t unused_sckpin, uint8_t unused_lrckpin) // TODO the unused_* pins are a very annoying leaky abstraction over this i2s hack
+{
+    ret_code_t err_code;
+
+    nrfx_i2s_config_t config = NRFX_I2S_DEFAULT_CONFIG;
+    config.sdin_pin  = NRFX_I2S_PIN_NOT_USED;
+    config.sdout_pin = outpin;
+    config.sck_pin   = unused_sckpin;
+    config.lrck_pin  = unused_lrckpin;
+    config.mck_setup = NRF_I2S_MCK_32MDIV10; ///< 32 MHz / 10 = 3.2 MHz.
+    config.ratio     = NRF_I2S_RATIO_32X;    ///< LRCK = MCK / 32.
+    config.channels  = NRF_I2S_CHANNELS_STEREO;
+
+    err_code = nrfx_i2s_init(&config, data_handler);
+    APP_ERROR_CHECK(err_code);
+
+    m_ws2812_service.leds_write_handler = ws2812_set_uniform_color_and_display;
+    err_code = ws2812_service_init(&m_ws2812_service);
+    APP_ERROR_CHECK(err_code);
 }
 
 void ws2812_test()
