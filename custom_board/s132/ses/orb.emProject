@@ -92,7 +92,6 @@
     <folder Name="Application">
       <file file_name="../../../main.c" />
       <file file_name="../config/sdk_config.h" />
-      <file file_name="../../../haptic_service.c" />
       <file file_name="../../../haptic_service.h" />
       <file file_name="../../../mpu.h" />
       <file file_name="../../../MadgwickAHRS.c" />
@@ -100,6 +99,7 @@
       <file file_name="../../../mpu_service.h" />
       <file file_name="../../../ws2812.h" />
       <file file_name="../../../ws2812_service.h" />
+      <file file_name="../../../haptic.h" />
     </folder>
     <folder Name="nRF_Segger_RTT">
       <file file_name="../../../../../../external/segger_rtt/SEGGER_RTT.c" />

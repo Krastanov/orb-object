@@ -26,12 +26,10 @@
 #include "nrf_sdh.h"
 #include "nrf_sdh_ble.h"
 #include "app_timer.h"
-#include "app_button.h"
 #include "nrf_ble_gatt.h"
 #include "nrf_ble_qwr.h"
 #include "nrf_pwr_mgmt.h"
 #include "nrfx_saadc.h"
-#include "nrfx_pwm.h"
 #include "nrf_twi_mngr.h"
 #include "nrf_twi_sensor.h"
 
@@ -45,7 +43,7 @@
 #include "nrf_log_ctrl.h"
 #include "nrf_log_default_backends.h"
 
-#include "haptic_service.h"
+#include "haptic.h"
 
 #include "mpu.h"
 
@@ -55,19 +53,17 @@
 // Hardware pins
 //===========================
 
-#define MPU_SCL  27
-#define MPU_SDA   0
-#define MPU_IRQ  30
+#define MPU_SCL        27
+#define MPU_SDA         0
+#define MPU_IRQ        30
 
 #define WS2812_LED      3
 #define WS2812_UNUSED1 18
 #define WS2812_UNUSED2 19
-
-#define MODULAR_BUTTON                  18
  
-#define MOTOR                             8
+#define MOTOR          11
 
-#define BATTERY_AIN                     NRF_SAADC_INPUT_AIN3
+#define BATTERY_AIN    NRF_SAADC_INPUT_AIN3
 
 //===========================
 // Bluetooth configuration
@@ -96,7 +92,6 @@
 // Configuration for various services
 //===========================
 
-#define BUTTON_DETECTION_DELAY          APP_TIMER_TICKS(50)                     /**< Delay from a GPIOTE event until a button is reported as pushed (in number of timer ticks). */
 #define BATTERY_LEVEL_MEAS_INTERVAL     APP_TIMER_TICKS(60000)                  /**< Battery level measurement interval (ticks). */
 #define BATTERY_420mV                   170
 
@@ -106,22 +101,13 @@
 APP_TIMER_DEF(m_battery_timer_id);                                              /**< Battery measurement and BLE notification timer. */
 APP_TIMER_DEF(m_mpu_notification_timer_id);                                     /**< MPU BLE notification timer. */
 
-HAPTIC_SERVICE_DEF(m_haptic_service);                                           /**< Haptic Service instance. */
 BLE_BAS_DEF(m_bas);                                                             /**< Battery Service instance. */
 NRF_BLE_GATT_DEF(m_gatt);                                                       /**< GATT module instance. */
 NRF_BLE_QWR_DEF(m_qwr);                                                         /**< Context for the Queued Write module.*/
 
 
-
-
-
-static nrfx_pwm_t m_pwm = NRFX_PWM_INSTANCE(0);
-
 static ble_uuid_t m_adv_uuids[] =                                               /**< Universally unique service identifiers that are advertised. */
 {
-//    {BLE_UUID_BATTERY_SERVICE,            BLE_UUID_TYPE_BLE},
-//    {HAPTIC_SERVICE_UUID_SERVICE,         BLE_UUID_TYPE_VENDOR_BEGIN},
-//    {MPU_SERVICE_UUID_SERVICE,            BLE_UUID_TYPE_VENDOR_BEGIN},
     {BLE_UUID_DEVICE_INFORMATION_SERVICE, BLE_UUID_TYPE_BLE}
 };
 
@@ -313,8 +299,6 @@ static void advertising_start(void)
 
     err_code = sd_ble_gap_adv_start(m_adv_handle, APP_BLE_CONN_CFG_TAG);
     APP_ERROR_CHECK(err_code);
-
-    //bsp_board_led_on(ADVERTISING_LED);
 }
 
 
@@ -331,21 +315,14 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
     {
         case BLE_GAP_EVT_CONNECTED:
             NRF_LOG_INFO("Connected");
-            //bsp_board_led_on(CONNECTED_LED);
-            //bsp_board_led_off(ADVERTISING_LED);
             m_conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
             err_code = nrf_ble_qwr_conn_handle_assign(&m_qwr, m_conn_handle);
-            APP_ERROR_CHECK(err_code);
-            err_code = app_button_enable();
             APP_ERROR_CHECK(err_code);
             break;
 
         case BLE_GAP_EVT_DISCONNECTED:
             NRF_LOG_INFO("Disconnected");
-            //bsp_board_led_off(CONNECTED_LED);
             m_conn_handle = BLE_CONN_HANDLE_INVALID;
-            err_code = app_button_disable();
-            APP_ERROR_CHECK(err_code);
             advertising_start();
             break;
 
@@ -441,7 +418,6 @@ static void power_management_init(void) // TODO enable dcdc
     ret_code_t err_code;
     err_code = nrf_pwr_mgmt_init();
     APP_ERROR_CHECK(err_code);
-    //NRF_POWER->DCDCEN = 1;
 }
 
 
@@ -455,41 +431,6 @@ static void idle_state_handle(void)
     {
         nrf_pwr_mgmt_run();
     }
-}
-
-
-void pwm_init(void) // TODO sdk_config, the pwm period is kinda hardcoded (same with base clock)
-{
-    ret_code_t err_code;
-    nrfx_pwm_config_t config =
-    {
-        .output_pins  = { MOTOR,
-                          NRFX_PWM_PIN_NOT_USED,
-                          NRFX_PWM_PIN_NOT_USED,
-                          NRFX_PWM_PIN_NOT_USED },
-        .irq_priority = NRFX_PWM_DEFAULT_CONFIG_IRQ_PRIORITY,
-        .base_clock   = NRF_PWM_CLK_16MHz,
-        .count_mode   = NRF_PWM_MODE_UP,
-        .top_value    = 256-1,
-        .load_mode    = NRF_PWM_LOAD_COMMON,
-        .step_mode    = NRF_PWM_STEP_AUTO,
-    };
-    err_code = nrfx_pwm_init(&m_pwm, &config, NULL);
-    APP_ERROR_CHECK(err_code);
-
-    // This array cannot be allocated on stack (hence "static") and it must
-    // be in RAM (hence no "const", though its content is not changed).
-    //static uint16_t /*const*/ seq_values[] = {2^0-1,2^2-1,2^4-1,2^6-1,2^8-1,2^10-1,2^12-1,2^14-1,2^15-1};
-    //static uint16_t /*const*/ seq_values[] = {1000,0,4000,0,10000,0,16000,0,32000};
-    static uint16_t /*const*/ seq_values[] = {255-255/8,255-255/4,255-255/2,0,0};
-    nrf_pwm_sequence_t const seq =
-    {
-        .values.p_grouped = seq_values,
-        .length           = NRF_PWM_VALUES_LENGTH(seq_values),
-        .repeats          = 64*200,
-        .end_delay        = 0
-    };
-    (void)nrfx_pwm_simple_playback(&m_pwm, &seq, 1, NRFX_PWM_FLAG_STOP);
 }
 
 
@@ -565,83 +506,6 @@ static void battery_level_meas_timeout_handler(void * p_context)
 }
 
 
-/**@brief Function for handling write events to the Motor characteristic.
- *
- * @param[in] p_haptic_service     Instance of Haptic Service to which the write applies.
- * @param[in] motor_state Written/desired state of the motor.
- */
-static void motor_write_handler(uint16_t conn_handle, haptic_service_t * p_haptic_service, uint8_t motor_state)
-{
-    if (motor_state)
-    {
-        nrf_gpio_pin_set(MOTOR);
-        NRF_LOG_INFO("Received Motor ON!");
-    }
-    else
-    {
-        nrf_gpio_pin_clear(MOTOR);
-        NRF_LOG_INFO("Received Motor OFF!");
-    }
-}
-
-
-/**@brief Function for the motor initialization.
- *
- * @details Initializes all motors used by the application.
- */
-static void motor_init(void)
-{
-    nrf_gpio_cfg_output(MOTOR);
-    nrf_gpio_pin_clear(MOTOR);
-}
-
-
-/**@brief Function for handling events from the button handler module.
- *
- * @param[in] pin_no        The pin that the event applies to.
- * @param[in] button_action The button action (press/release).
- */
-static void button_event_handler(uint8_t pin_no, uint8_t button_action)
-{
-    ret_code_t err_code;
-    uint8_t button_status;
-
-    if (pin_no == MODULAR_BUTTON)
-    {
-        NRF_LOG_INFO("Send button state change.");
-        button_status  = app_button_is_pushed(0);
-        err_code = haptic_service_on_button_change(m_conn_handle, &m_haptic_service, button_status);
-        if (err_code != NRF_SUCCESS &&
-            err_code != BLE_ERROR_INVALID_CONN_HANDLE &&
-            err_code != NRF_ERROR_INVALID_STATE &&
-            err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
-        {
-            APP_ERROR_CHECK(err_code);
-        }
-    } else {
-        APP_ERROR_HANDLER(pin_no);
-    }
-}
-
-
-/**@brief Function for initializing the button handler module.
- */
-static void buttons_init(void)
-{
-    ret_code_t err_code;
-
-    //The array must be static because a pointer to it will be saved in the button handler module.
-    static app_button_cfg_t buttons[] =
-    {
-        {MODULAR_BUTTON, APP_BUTTON_ACTIVE_LOW, NRF_GPIO_PIN_PULLUP, button_event_handler}
-    };
-
-    err_code = app_button_init(buttons, ARRAY_SIZE(buttons),
-                               BUTTON_DETECTION_DELAY);
-    APP_ERROR_CHECK(err_code);
-}
-
-
 /**@brief Function for handling Queued Write Module errors.
  *
  * @details A pointer to this function will be passed to each service which may need to inform the
@@ -659,7 +523,6 @@ static void nrf_qwr_error_handler(uint32_t nrf_error)
 static void services_init(void)
 {
     ret_code_t               err_code;
-    haptic_service_init_t  init = {0};
     nrf_ble_qwr_init_t qwr_init = {0};
     ble_bas_init_t     bas_init;
 
@@ -668,12 +531,6 @@ static void services_init(void)
     qwr_init.error_handler = nrf_qwr_error_handler;
 
     err_code = nrf_ble_qwr_init(&m_qwr, &qwr_init);
-    APP_ERROR_CHECK(err_code);
-
-    // Initialize Haptic Service.
-    init.motor_write_handler = motor_write_handler;
-
-    err_code = haptic_service_init(&m_haptic_service, &init);
     APP_ERROR_CHECK(err_code);
 
     // Initialize Battery Service.
@@ -784,9 +641,6 @@ int main(void)
     log_init();
     timers_init();
 
-    motor_init();
-    buttons_init();
-    pwm_init();
     saadc_init();
 
     power_management_init();
@@ -798,7 +652,8 @@ int main(void)
     services_init();
     ws2812_init(WS2812_LED,WS2812_UNUSED1,WS2812_UNUSED2); // TODO This includes I2S init and BLE service init. The WS2812 driver needs to become a bit more modular.
     mpu_init(MPU_SCL, MPU_SDA, MPU_IRQ); // TODO This includes TWI init and BLE service init. The MPU driver needs to become a bit more modular if other TWI devices are to be added or advanced BLE configuration is to be used.
-    
+    haptic_init(MOTOR); // TODO This includes PWM init and BLE service init. It needs to be more modular if the service is to be reused.
+
     advertising_init();
     conn_params_init();
     nfc_init();
