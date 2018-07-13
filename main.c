@@ -55,9 +55,9 @@
 // Hardware pins
 //===========================
 
-#define MPU_SCL  11
-#define MPU_SDA  12
-#define MPU_IRQ  16
+#define MPU_SCL  27
+#define MPU_SDA   0
+#define MPU_IRQ  30
 
 #define WS2812_LED      3
 #define WS2812_UNUSED1 18
