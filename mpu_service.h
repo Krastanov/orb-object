@@ -24,6 +24,7 @@
 #include <stdbool.h>
 #include "ble.h"
 #include "ble_srv_common.h"
+#include "ble_conn_state.h"
 #include "nrf_sdh_ble.h"
 
 #ifdef __cplusplus
@@ -177,6 +178,30 @@ void mpu_service_on_ble_evt(ble_evt_t const * p_ble_evt, void * p_context)
 }
 
 
+static uint32_t notify_all(ble_gatts_hvx_params_t * params)
+{
+    uint32_t err_code = NRF_SUCCESS;
+    ble_conn_state_conn_handle_list_t conn_handles = ble_conn_state_conn_handles();
+    // Try sending notifications to all valid connection handles.
+    for (uint32_t i = 0; i < conn_handles.len; i++)
+    {
+        if (ble_conn_state_status(conn_handles.conn_handles[i]) == BLE_CONN_STATUS_CONNECTED)
+        {
+            if (err_code == NRF_SUCCESS)
+            {
+                err_code = sd_ble_gatts_hvx(conn_handles.conn_handles[i], params);
+            }
+            else
+            {
+                // Preserve the first non-zero error code
+                UNUSED_RETURN_VALUE(sd_ble_gatts_hvx(conn_handles.conn_handles[i], params));
+            }
+        }
+    }
+    return err_code;
+}
+
+
 /**@brief Function for sending an orientation notification.
  *
  ' @param[in] conn_handle   Handle of the peripheral connection to which the button state notification will be sent.
@@ -186,7 +211,7 @@ void mpu_service_on_ble_evt(ble_evt_t const * p_ble_evt, void * p_context)
  *
  * @retval NRF_SUCCESS If the notification was sent successfully. Otherwise, an error code is returned.
  */
-uint32_t mpu_service_on_orientation_change(uint16_t conn_handle, mpu_service_t * p_mpu_service, float q0, float q1, float q2, float q3, float kax, float kay, float kaz)
+uint32_t mpu_service_on_orientation_change(mpu_service_t * p_mpu_service, float q0, float q1, float q2, float q3, float kax, float kay, float kaz)
 { // TODO This should be sending bytes, not floats. It is waste of resources to send 32bits per number.
     uint32_t   err_code;
 
@@ -200,7 +225,7 @@ uint32_t mpu_service_on_orientation_change(uint16_t conn_handle, mpu_service_t *
     paramsq.handle = p_mpu_service->quat_char_handles.value_handle;
     paramsq.p_data = (uint8_t*)&bufferq;
     paramsq.p_len  = &lenq;
-    err_code = sd_ble_gatts_hvx(conn_handle, &paramsq);
+    err_code = notify_all(&paramsq);
     if (err_code != NRF_SUCCESS &&
         err_code != BLE_ERROR_INVALID_CONN_HANDLE &&
         err_code != NRF_ERROR_INVALID_STATE &&
@@ -225,7 +250,7 @@ uint32_t mpu_service_on_orientation_change(uint16_t conn_handle, mpu_service_t *
     paramsk.handle = p_mpu_service->kinaccel_char_handles.value_handle;
     paramsk.p_data = (uint8_t*)&bufferk;
     paramsk.p_len  = &lenk;
-    err_code = sd_ble_gatts_hvx(conn_handle, &paramsk);
+    err_code = notify_all(&paramsk);
     if (err_code != NRF_SUCCESS &&
         err_code != BLE_ERROR_INVALID_CONN_HANDLE &&
         err_code != NRF_ERROR_INVALID_STATE &&

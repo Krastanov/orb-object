@@ -10,6 +10,7 @@
 // TODO most of the APP_ERROR_CHECK might need to become VERIFY_SUCCESS (from sdk_macros.h) and the error handler for APP_ERROR_CHECK might need changing
 // TODO go with a fine comb over the definitions of each characteristic (in the characteristic add functions)
 // TODO turn write characteristics to no-response-write
+// TODO currently a lot of headers include the implementation instead of having it in a separate c file. The way it is currently done polutes the global namespace and it would be nice to have it cleared up.
 
 #include <stdint.h>
 #include <string.h>
@@ -49,6 +50,8 @@
 
 #include "ws2812.h"
 
+#include "battery_service.h"
+
 //===========================
 // Hardware pins
 //===========================
@@ -63,7 +66,7 @@
  
 #define MOTOR          11
 
-#define BATTERY_AIN    NRF_SAADC_INPUT_AIN3
+#define BATTERY_AIN    NRF_SAADC_INPUT_AIN5
 
 //===========================
 // Bluetooth configuration
@@ -88,20 +91,6 @@
 
 #define DEAD_BEEF                       0xDEADBEEF                              /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
-//===========================
-// Configuration for various services
-//===========================
-
-#define BATTERY_LEVEL_MEAS_INTERVAL     APP_TIMER_TICKS(60000)                  /**< Battery level measurement interval (ticks). */
-#define BATTERY_420mV                   170
-
-#define MPU_NOTIFICATION_INTERVAL       APP_TIMER_TICKS(200)                    /**< MPU BLE notification interval (ticks). */
-
-
-APP_TIMER_DEF(m_battery_timer_id);                                              /**< Battery measurement and BLE notification timer. */
-APP_TIMER_DEF(m_mpu_notification_timer_id);                                     /**< MPU BLE notification timer. */
-
-BLE_BAS_DEF(m_bas);                                                             /**< Battery Service instance. */
 NRF_BLE_GATT_DEF(m_gatt);                                                       /**< GATT module instance. */
 NRF_BLE_QWR_DEF(m_qwr);                                                         /**< Context for the Queued Write module.*/
 
@@ -434,77 +423,6 @@ static void idle_state_handle(void)
 }
 
 
-void saadc_callback(nrfx_saadc_evt_t const * p_event)
-{
-    NRF_LOG_DEBUG("ADC event");
-}
-
-
-void saadc_init(void) // TODO sdk_config, call calibration routines (wait for done event), and doing it async
-{
-    ret_code_t err_code;
-    nrfx_saadc_config_t config = NRFX_SAADC_DEFAULT_CONFIG;
-    nrf_saadc_channel_config_t channel_config =
-        NRFX_SAADC_DEFAULT_CHANNEL_CONFIG_SE(BATTERY_AIN);
-    config.resolution = NRF_SAADC_RESOLUTION_8BIT;
-    channel_config.acq_time = NRF_SAADC_ACQTIME_40US;
-
-    err_code = nrfx_saadc_init(&config, saadc_callback);
-    APP_ERROR_CHECK(err_code);
-
-    err_code = nrfx_saadc_channel_init(0, &channel_config); // TODO channel 0 is kinda like a global variable
-    APP_ERROR_CHECK(err_code);
-
-    err_code = nrfx_saadc_calibrate_offset();
-    APP_ERROR_CHECK(err_code);
-}
-
-
-/**@brief Function for performing battery measurement and updating the Battery Level characteristic
- *        in Battery Service.
- */
-static void battery_level_update(void)
-{
-    ret_code_t err_code;
-    nrf_saadc_value_t battery_measurement;
-    uint16_t  battery_level;
-
-    err_code = nrfx_saadc_sample_convert(0, &battery_measurement); // TODO channel 0 is kinda like a global variable
-    APP_ERROR_CHECK(err_code);
-    battery_measurement = battery_measurement*420/BATTERY_420mV;
-    battery_level = MAX(battery_measurement-360,0);
-    battery_level = (battery_level*100)/60;
-    battery_level = MIN(battery_level,100);
-    battery_level /= 10;
-    battery_level *= 10;
-    NRF_LOG_DEBUG("Battery: raw %d, %d%%", battery_measurement, battery_level);
-
-    err_code = ble_bas_battery_level_update(&m_bas, battery_level, BLE_CONN_HANDLE_ALL);
-    if ((err_code != NRF_SUCCESS) &&
-        (err_code != NRF_ERROR_INVALID_STATE) &&
-        (err_code != NRF_ERROR_RESOURCES) &&
-        (err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
-       )
-    {
-        APP_ERROR_HANDLER(err_code);
-    }
-}
-
-
-/**@brief Function for handling the Battery measurement timer timeout.
- *
- * @details This function will be called each time the battery level measurement timer expires.
- *
- * @param[in]   p_context   Pointer used for passing some arbitrary information (context) from the
- *                          app_start_timer() call to the timeout handler.
- */
-static void battery_level_meas_timeout_handler(void * p_context)
-{
-    UNUSED_PARAMETER(p_context);
-    battery_level_update();
-    NRF_LOG_DEBUG("bat %d", m_conn_handle);
-}
-
 
 /**@brief Function for handling Queued Write Module errors.
  *
@@ -532,24 +450,6 @@ static void services_init(void)
 
     err_code = nrf_ble_qwr_init(&m_qwr, &qwr_init);
     APP_ERROR_CHECK(err_code);
-
-    // Initialize Battery Service.
-    memset(&bas_init, 0, sizeof(bas_init));
-
-    // Here the sec level for the Battery Service can be changed/increased.
-    BLE_GAP_CONN_SEC_MODE_SET_OPEN(&bas_init.battery_level_char_attr_md.cccd_write_perm);
-    BLE_GAP_CONN_SEC_MODE_SET_OPEN(&bas_init.battery_level_char_attr_md.read_perm);
-    BLE_GAP_CONN_SEC_MODE_SET_NO_ACCESS(&bas_init.battery_level_char_attr_md.write_perm);
-
-    BLE_GAP_CONN_SEC_MODE_SET_OPEN(&bas_init.battery_level_report_read_perm);
-
-    bas_init.evt_handler          = NULL;
-    bas_init.support_notification = true;
-    bas_init.p_report_ref         = NULL;
-    bas_init.initial_batt_level   = 100;
-
-    err_code = ble_bas_init(&m_bas, &bas_init);
-    APP_ERROR_CHECK(err_code);
 }
 
 
@@ -562,31 +462,8 @@ static void timers_init(void)
     // Initialize timer module, making it use the scheduler
     ret_code_t err_code = app_timer_init();
     APP_ERROR_CHECK(err_code);
-
-    // Create timers.
-    err_code = app_timer_create(&m_battery_timer_id,
-                                APP_TIMER_MODE_REPEATED,
-                                battery_level_meas_timeout_handler);
-    APP_ERROR_CHECK(err_code);
-    err_code = app_timer_create(&m_mpu_notification_timer_id, // TODO this time should not be necessary, this should be a callback, but there is a bit of a problem with relative priorities.
-                                APP_TIMER_MODE_REPEATED,
-                                mpu_ble_notification);
-    APP_ERROR_CHECK(err_code);
 }
 
-
-/**@brief Function for starting application timers.
- */
-static void application_timers_start(void)
-{
-    ret_code_t err_code;
-
-    // Start application timers.
-    err_code = app_timer_start(m_battery_timer_id, BATTERY_LEVEL_MEAS_INTERVAL, NULL);
-    APP_ERROR_CHECK(err_code);
-    err_code = app_timer_start(m_mpu_notification_timer_id, MPU_NOTIFICATION_INTERVAL, (void*)&m_conn_handle);
-    APP_ERROR_CHECK(err_code);
-}
 
 /**
  * @brief Callback function for handling NFC events.
@@ -611,8 +488,6 @@ static void nfc_callback(void * p_context, nfc_t2t_event_t event, const uint8_t 
 /**
  * @brief Setup NFC.
  */
-
-
 static void nfc_init(void)
 {
     ret_code_t err_code;
@@ -641,8 +516,6 @@ int main(void)
     log_init();
     timers_init();
 
-    saadc_init();
-
     power_management_init();
 
     ble_stack_init();
@@ -650,6 +523,7 @@ int main(void)
     gatt_init();
 
     services_init();
+    battery_init(BATTERY_AIN);
     ws2812_init(WS2812_LED,WS2812_UNUSED1,WS2812_UNUSED2); // TODO This includes I2S init and BLE service init. The WS2812 driver needs to become a bit more modular.
     mpu_init(MPU_SCL, MPU_SDA, MPU_IRQ); // TODO This includes TWI init and BLE service init. The MPU driver needs to become a bit more modular if other TWI devices are to be added or advanced BLE configuration is to be used.
     haptic_init(MOTOR); // TODO This includes PWM init and BLE service init. It needs to be more modular if the service is to be reused.
@@ -659,7 +533,8 @@ int main(void)
     nfc_init();
 
     // Start execution.
-    application_timers_start();
+    mpu_start();
+    battery_start();
     advertising_start();
     NRF_LOG_INFO("Orb started.");
 

@@ -108,6 +108,11 @@ NRF_TWI_SENSOR_DEF(m_mpu, &m_twi_mngr, 30); /**< TWI Sensor instance.*/
 // MPU BLE Service instance, to be initilized in mpu_init
 MPU_SERVICE_DEF(m_mpu_service);
 
+#define MPU_NOTIFICATION_INTERVAL       APP_TIMER_TICKS(200)                    /**< MPU BLE notification interval (ticks). */
+APP_TIMER_DEF(m_mpu_notification_timer_id);                                     /**< MPU BLE notification timer. */
+
+
+
 /**@brief Measure and remove bias on the fly. Returns 1 if the magnetometer is not ready.
  */
 static uint32_t remove_bias(float* ax, float* ay, float* az, float* gx, float* gy, float* gz, float* mx, float* my, float* mz)
@@ -276,7 +281,7 @@ static void irq_callback(nrfx_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
  */
 void mpu_ble_notification(void * p_context)
 {
-    mpu_service_on_orientation_change(*(uint16_t*)p_context, &m_mpu_service, q0, q1, q2, q3, kax, kay, kaz);
+    mpu_service_on_orientation_change(&m_mpu_service, q0, q1, q2, q3, kax, kay, kaz);
 }
 
 // For use only inside mpu_init!
@@ -450,6 +455,23 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq) // based on github.com/kris
     // Initialize the BLE services.
     // TODO decouple the BLE MPU service from the MPU driver from the Sensor fusion.
     mpu_service_init(&m_mpu_service);
+
+
+
+    err_code = app_timer_create(&m_mpu_notification_timer_id, // TODO this time should not be necessary, this should be a callback, but there is a bit of a problem with relative priorities.
+                                APP_TIMER_MODE_REPEATED,
+                                mpu_ble_notification);
+    APP_ERROR_CHECK(err_code);
+}
+
+
+void mpu_start(void)
+{
+    ret_code_t err_code;
+
+    // Start application timers.
+    err_code = app_timer_start(m_mpu_notification_timer_id, MPU_NOTIFICATION_INTERVAL, NULL);
+    APP_ERROR_CHECK(err_code);
 }
 
 // TODO make the following convenience functions
