@@ -1,7 +1,6 @@
 /**
  * @brief nRF52 Orb.
  *
- * This file contains the source code for a sample server application using the LED Button service.
  */
 
 // TODO do not attempt notifications in the callbacks unless we are actually connected
