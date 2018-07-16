@@ -1,6 +1,6 @@
 // TODO add battery power state service, not just battery level
 
-#define BATTERY_LEVEL_MEAS_INTERVAL     APP_TIMER_TICKS(20000)                  /**< Battery level measurement interval (ticks). */
+#define BATTERY_LEVEL_MEAS_INTERVAL     APP_TIMER_TICKS(60000)                  /**< Battery level measurement interval (ticks). */
 #define BATTERY_420mV                   178
 BLE_BAS_DEF(m_bas);                                                             /**< Battery Service instance. */
 

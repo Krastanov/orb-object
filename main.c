@@ -401,7 +401,7 @@ static void log_init(void)
 
 /**@brief Function for initializing power management.
  */
-static void power_management_init(void) // TODO enable dcdc
+static void power_management_init(void)
 {
     ret_code_t err_code;
     err_code = nrf_pwr_mgmt_init();
@@ -507,16 +507,18 @@ static void nfc_init(void)
     APP_ERROR_CHECK(err_code);
 }
 
+
 /**@brief Function for application main entry.
  */
 int main(void)
 {
+    nrf_delay_ms(1000); // TODO Why is this necessary? (It does not start without a debugger, unless this delay is present).
+
     // Initialize.
     log_init();
     timers_init();
 
     power_management_init();
-
     ble_stack_init();
     gap_params_init();
     gatt_init();
