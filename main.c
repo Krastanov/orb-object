@@ -51,6 +51,8 @@
 
 #include "battery_service.h"
 
+#include "scanner.h"
+
 //===========================
 // Hardware pins
 //===========================
@@ -59,7 +61,7 @@
 #define MPU_SDA         0
 #define MPU_IRQ        30
 
-#define WS2812_LED      3
+#define WS2812_LED     26
 #define WS2812_UNUSED1 18
 #define WS2812_UNUSED2 19
  
@@ -508,6 +510,8 @@ static void nfc_init(void)
 }
 
 
+
+
 /**@brief Function for application main entry.
  */
 int main(void)
@@ -538,6 +542,10 @@ int main(void)
     battery_start();
     advertising_start();
     NRF_LOG_INFO("Orb started.");
+
+
+    scanner_init();
+    sd_ble_gap_scan_start(&scan_params,&scan_data);
 
     // Enter main loop.
     for (;;)
