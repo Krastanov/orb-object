@@ -95,12 +95,6 @@
 NRF_BLE_GATT_DEF(m_gatt);                                                       /**< GATT module instance. */
 NRF_BLE_QWR_DEF(m_qwr);                                                         /**< Context for the Queued Write module.*/
 
-
-static ble_uuid_t m_adv_uuids[] =                                               /**< Universally unique service identifiers that are advertised. */
-{
-    {BLE_UUID_DEVICE_INFORMATION_SERVICE, BLE_UUID_TYPE_BLE}
-};
-
 static uint16_t m_conn_handle = BLE_CONN_HANDLE_INVALID;                        /**< Handle of the current connection. */
 
 static uint8_t m_adv_handle = BLE_GAP_ADV_SET_HANDLE_NOT_SET;                   /**< Advertising handle used to identify an advertising set. */
@@ -193,17 +187,31 @@ static void advertising_init(void)
     // Build and set advertising data.
     memset(&advdata, 0, sizeof(advdata));
 
-    advdata.name_type          = BLE_ADVDATA_FULL_NAME;
-    advdata.include_appearance = true;
+    advdata.name_type          = BLE_ADVDATA_NO_NAME;
+    advdata.include_appearance = false;
     advdata.flags              = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
 
-
     memset(&srdata, 0, sizeof(srdata));
-    srdata.uuids_complete.uuid_cnt = sizeof(m_adv_uuids) / sizeof(m_adv_uuids[0]);
-    srdata.uuids_complete.p_uuids  = m_adv_uuids;
 
     err_code = ble_advdata_encode(&advdata, m_adv_data.adv_data.p_data, &m_adv_data.adv_data.len);
     APP_ERROR_CHECK(err_code);
+
+    // Manually add a 128-uuid service data (not supported by the Nordic SDK)
+    // TODO move this to a more encapsulated location
+    uint8_t * p_encoded_data = m_adv_data.adv_data.p_data;
+    uint16_t * p_offset = &m_adv_data.adv_data.len;
+    uint8_t data_size = 1;
+    p_encoded_data[*p_offset]  = (uint8_t)(AD_TYPE_FIELD_SIZE + 16 + data_size);
+    *p_offset                 += AD_LENGTH_FIELD_SIZE;
+    p_encoded_data[*p_offset]  = BLE_GAP_AD_TYPE_SERVICE_DATA_128BIT_UUID;
+    *p_offset                 += AD_TYPE_FIELD_SIZE;
+    uint8_t service_uuid[16] = {0x27, 0x3c, 0xa0, 0x5a, 0xcd, 0x0e, 0x4f, 0x32, 0xbc, 0xc9, 0x28, 0x98, 0x9b, 0xb6, 0xe9, 0xa6};
+    for (int i=0; i<16; i++) {
+        p_encoded_data[*p_offset+i] = service_uuid[i];
+    }
+    *p_offset += 16;
+    p_encoded_data[*p_offset] = 0x00;
+    *p_offset += 1;
 
     err_code = ble_advdata_encode(&srdata, m_adv_data.scan_rsp_data.p_data, &m_adv_data.scan_rsp_data.len);
     APP_ERROR_CHECK(err_code);
