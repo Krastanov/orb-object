@@ -285,10 +285,10 @@ void mpu_ble_notification(void * p_context)
 }
 
 // For use only inside mpu_init!
-#define write_byte(addr, data) buffer[0]=addr; buffer[1]=data; APP_ERROR_CHECK(nrfx_twim_tx(&twi_master, MPU_ADDR, buffer, 2, false))
-#define read_byte(addr) buffer[0]=addr; APP_ERROR_CHECK(nrfx_twim_tx(&twi_master, MPU_ADDR, buffer, 1, true)); APP_ERROR_CHECK(nrfx_twim_rx(&twi_master, MPU_ADDR, buffer, 1))
-#define write_mag_byte(addr, data) buffer[0]=addr; buffer[1]=data; APP_ERROR_CHECK(nrfx_twim_tx(&twi_master, MAG_ADDR, buffer, 2, false))
-#define read_mag_byte(addr) buffer[0]=addr; APP_ERROR_CHECK(nrfx_twim_tx(&twi_master, MAG_ADDR, buffer, 1, true)); APP_ERROR_CHECK(nrfx_twim_rx(&twi_master, MAG_ADDR, buffer, 1))
+#define write_byte(addr, data) buffer[0]=addr; buffer[1]=data; if(nrfx_twim_tx(&twi_master, MPU_ADDR, buffer, 2, false)) goto TWI_FAIL
+#define read_byte(addr) buffer[0]=addr; if(nrfx_twim_tx(&twi_master, MPU_ADDR, buffer, 1, true) || nrfx_twim_rx(&twi_master, MPU_ADDR, buffer, 1)) goto TWI_FAIL
+#define write_mag_byte(addr, data) buffer[0]=addr; buffer[1]=data; if(nrfx_twim_tx(&twi_master, MAG_ADDR, buffer, 2, false)) goto TWI_FAIL
+#define read_mag_byte(addr) buffer[0]=addr; if(nrfx_twim_tx(&twi_master, MAG_ADDR, buffer, 1, true) || nrfx_twim_rx(&twi_master, MAG_ADDR, buffer, 1)) goto TWI_FAIL
 
 /**@brief Initialize the MPU9250. It internally takes care of TWI initialization. The MPU is set to 200Hz and the MAG is set to 100Hz.
  */
@@ -462,6 +462,10 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq) // based on github.com/kris
                                 APP_TIMER_MODE_REPEATED,
                                 mpu_ble_notification);
     APP_ERROR_CHECK(err_code);
+    return;
+    TWI_FAIL:
+    nrfx_twim_uninit(&twi_master);
+    NRF_LOG_DEBUG("There is a serious problem with TWI!");
 }
 
 
