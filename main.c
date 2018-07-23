@@ -319,7 +319,7 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             break;
 
         case BLE_GAP_EVT_DISCONNECTED:
-            NRF_LOG_INFO("Disconnected");
+            NRF_LOG_INFO("Disconnected for reason %d", p_ble_evt->evt.gap_evt.params.disconnected.reason);
             m_conn_handle = BLE_CONN_HANDLE_INVALID;
             advertising_start();
             break;
@@ -538,7 +538,7 @@ int main(void)
     services_init();
     battery_init(BATTERY_AIN);
     ws2812_init(WS2812_LED,WS2812_UNUSED1,WS2812_UNUSED2); // TODO This includes I2S init and BLE service init. The WS2812 driver needs to become a bit more modular.
-    mpu_init(MPU_SCL, MPU_SDA, MPU_IRQ); // TODO This includes TWI init and BLE service init. The MPU driver needs to become a bit more modular if other TWI devices are to be added or advanced BLE configuration is to be used.
+    mpu_init(MPU_SCL, MPU_SDA, MPU_IRQ, &m_adv_handle, &m_adv_data); // TODO This includes TWI init and BLE service init. The MPU driver needs to become a bit more modular if other TWI devices are to be added or advanced BLE configuration is to be used.
     haptic_init(MOTOR); // TODO This includes PWM init and BLE service init. It needs to be more modular if the service is to be reused.
 
     advertising_init();

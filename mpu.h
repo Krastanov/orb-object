@@ -108,7 +108,7 @@ NRF_TWI_SENSOR_DEF(m_mpu, &m_twi_mngr, 30); /**< TWI Sensor instance.*/
 // MPU BLE Service instance, to be initilized in mpu_init
 MPU_SERVICE_DEF(m_mpu_service);
 
-#define MPU_NOTIFICATION_INTERVAL       APP_TIMER_TICKS(200)                    /**< MPU BLE notification interval (ticks). */
+#define MPU_NOTIFICATION_INTERVAL       APP_TIMER_TICKS(1000)                    /**< MPU BLE notification interval (ticks). */
 APP_TIMER_DEF(m_mpu_notification_timer_id);                                     /**< MPU BLE notification timer. */
 
 
@@ -277,11 +277,32 @@ static void irq_callback(nrfx_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
     mpu_read_and_fuse_sensors();
 }
 
-/**@brief Trigger a BLE notification. Needs to be called from a timer in main.c. The p_context contains the connection handle.
+
+// TODO This is extremely entangled with the advertising_init from main... fix that with better abstraction.
+static ble_advdata_t mpu_advdata;
+static ble_advdata_t mpu_srdata;
+static uint8_t * mpu_p_adv_handle;
+static ble_gap_adv_data_t * mpu_p_adv_data;
+static ble_gap_adv_params_t mpu_adv_params;
+
+/**@brief Trigger a BLE notification and update advert packet. Needs to be called from a timer. The p_context contains the connection handle.
  */
 void mpu_ble_notification(void * p_context)
 {
+    // The BLE service
     mpu_service_on_orientation_change(&m_mpu_service, q0, q1, q2, q3, kax, kay, kaz);
+    // The BLE advert package
+    ret_code_t err_code;
+    uint8_t * p_encoded_data = mpu_p_adv_data->adv_data.p_data;
+    uint16_t * p_offset = &mpu_p_adv_data->adv_data.len;
+    p_encoded_data[*p_offset-1] = 0x01;
+    /*err_code = sd_ble_gap_adv_stop(*mpu_p_adv_handle);
+    APP_ERROR_CHECK(err_code);
+    err_code = sd_ble_gap_adv_set_configure(mpu_p_adv_handle, mpu_p_adv_data, &mpu_adv_params);
+    APP_ERROR_CHECK(err_code);
+    err_code = sd_ble_gap_adv_start(*mpu_p_adv_handle, 1); // TODO The "1" is APP_BLE_CONN_CFG_TAG from main.c. This should not be hardcoded.
+    APP_ERROR_CHECK(err_code);
+*/
 }
 
 // For use only inside mpu_init!
@@ -290,9 +311,11 @@ void mpu_ble_notification(void * p_context)
 #define write_mag_byte(addr, data) buffer[0]=addr; buffer[1]=data; if(nrfx_twim_tx(&twi_master, MAG_ADDR, buffer, 2, false)) goto TWI_FAIL
 #define read_mag_byte(addr) buffer[0]=addr; if(nrfx_twim_tx(&twi_master, MAG_ADDR, buffer, 1, true) || nrfx_twim_rx(&twi_master, MAG_ADDR, buffer, 1)) goto TWI_FAIL
 
+static uint8_t mpu_fail=0;
+
 /**@brief Initialize the MPU9250. It internally takes care of TWI initialization. The MPU is set to 200Hz and the MAG is set to 100Hz.
  */
-void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq) // based on github.com/kriswiner/MPU9250
+void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq, uint8_t * p_adv_handle, ble_gap_adv_data_t * p_adv_data) // based on github.com/kriswiner/MPU9250
 {
     // TODO use DPM and/or FIFO
     // TODO set low-pass filter
@@ -452,10 +475,18 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq) // based on github.com/kris
 
 
 
-    // Initialize the BLE services.
-    // TODO decouple the BLE MPU service from the MPU driver from the Sensor fusion.
+    // Initialize the BLE services and advertisement data.
+    // TODO decouple the BLE MPU service from the MPU driver from the Sensor fusion, and decouple from the advert_init in main.c
+    mpu_p_adv_handle = p_adv_handle;
+    mpu_p_adv_data = p_adv_data;
+    memset(&mpu_adv_params, 0, sizeof(mpu_adv_params));
+    mpu_adv_params.primary_phy     = BLE_GAP_PHY_1MBPS;
+    mpu_adv_params.duration        = BLE_GAP_ADV_TIMEOUT_GENERAL_UNLIMITED;   /**< The advertising time-out (in units of seconds). When set to 0, we will never time out. */ 
+    mpu_adv_params.properties.type = BLE_GAP_ADV_TYPE_CONNECTABLE_SCANNABLE_UNDIRECTED;
+    mpu_adv_params.p_peer_addr     = NULL;
+    mpu_adv_params.filter_policy   = BLE_GAP_ADV_FP_ANY;
+    mpu_adv_params.interval        = 64;/**< The advertising interval (in units of 0.625 ms; this value corresponds to 40 ms). */
     mpu_service_init(&m_mpu_service);
-
 
 
     err_code = app_timer_create(&m_mpu_notification_timer_id, // TODO this time should not be necessary, this should be a callback, but there is a bit of a problem with relative priorities.
@@ -465,6 +496,7 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq) // based on github.com/kris
     return;
     TWI_FAIL:
     nrfx_twim_uninit(&twi_master);
+    mpu_fail = 1;
     NRF_LOG_DEBUG("There is a serious problem with TWI!");
 }
 
@@ -474,8 +506,11 @@ void mpu_start(void)
     ret_code_t err_code;
 
     // Start application timers.
-    err_code = app_timer_start(m_mpu_notification_timer_id, MPU_NOTIFICATION_INTERVAL, NULL);
-    APP_ERROR_CHECK(err_code);
+    if (mpu_fail==0)
+    {
+        err_code = app_timer_start(m_mpu_notification_timer_id, MPU_NOTIFICATION_INTERVAL, NULL);
+        APP_ERROR_CHECK(err_code);
+    }
 }
 
 // TODO make the following convenience functions
