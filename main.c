@@ -363,8 +363,7 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             break;
 
         default:
-            NRF_LOG_DEBUG("Untreated event 0x%x",p_ble_evt->header.evt_id);
-            // No implementation needed.
+            //NRF_LOG_DEBUG("Untreated event 0x%x",p_ble_evt->header.evt_id);
             break;
     }
 }
@@ -546,10 +545,8 @@ int main(void)
     advertising_start();
     NRF_LOG_INFO("Orb started.");
 
-
     scanner_init();
-    //sd_ble_gap_scan_start(&scan_params,&scan_data);
-
+    
     // Enter main loop.
     for (;;)
     {
