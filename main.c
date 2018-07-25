@@ -13,6 +13,7 @@
 
 #include <stdint.h>
 #include <string.h>
+
 #include "nordic_common.h"
 #include "nrf.h"
 #include "app_error.h"
@@ -33,11 +34,9 @@
 #include "nrf_twi_mngr.h"
 #include "nrf_twi_sensor.h"
 
-// NFC
 #include "nfc_t2t_lib.h"
 #include "nfc_ndef_msg.h"
 #include "nfc_text_rec.h"
-
 
 #include "nrf_log.h"
 #include "nrf_log_ctrl.h"
@@ -52,6 +51,10 @@
 #include "battery_service.h"
 
 #include "scanner.h"
+
+
+#define DEAD_BEEF 0xDEADBEEF // Value used as error code on stack dump, can be used to identify stack location on stack unwind.
+
 
 //===========================
 // Hardware pins
@@ -69,28 +72,27 @@
 
 #define BATTERY_AIN    NRF_SAADC_INPUT_AIN5
 
+
 //===========================
 // Bluetooth configuration
 //===========================
 
-#define DEVICE_NAME                     "Orb"                                   /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "Orb"
 
-#define APP_BLE_OBSERVER_PRIO           3                                       /**< Application's BLE observer priority. You shouldn't need to modify this value. */
-#define APP_BLE_CONN_CFG_TAG            1                                       /**< A tag identifying the SoftDevice BLE configuration. */
+#define APP_BLE_OBSERVER_PRIO           3    // Application's BLE observer priority. You shouldn't need to modify this value.
+#define APP_BLE_CONN_CFG_TAG            1    // A tag identifying the SoftDevice BLE configuration.
 
-#define APP_ADV_INTERVAL                64                                      /**< The advertising interval (in units of 0.625 ms; this value corresponds to 40 ms). */
-#define APP_ADV_DURATION                BLE_GAP_ADV_TIMEOUT_GENERAL_UNLIMITED   /**< The advertising time-out (in units of seconds). When set to 0, we will never time out. */
+#define APP_ADV_INTERVAL                640  // in units of 0.625 ms
+#define APP_ADV_DURATION                BLE_GAP_ADV_TIMEOUT_GENERAL_UNLIMITED
 
-#define MIN_CONN_INTERVAL               MSEC_TO_UNITS(100, UNIT_1_25_MS)        /**< Minimum acceptable connection interval (0.5 seconds). */
-#define MAX_CONN_INTERVAL               MSEC_TO_UNITS(200, UNIT_1_25_MS)        /**< Maximum acceptable connection interval (1 second). */
-#define SLAVE_LATENCY                   0                                       /**< Slave latency. */
-#define CONN_SUP_TIMEOUT                MSEC_TO_UNITS(4000, UNIT_10_MS)         /**< Connection supervisory time-out (4 seconds). */
+#define MIN_CONN_INTERVAL               6   // in units of 1.25us
+#define MAX_CONN_INTERVAL               100
+#define SLAVE_LATENCY                   0
+#define CONN_SUP_TIMEOUT                MSEC_TO_UNITS(4000, UNIT_10_MS)
+#define FIRST_CONN_PARAMS_UPDATE_DELAY  APP_TIMER_TICKS(2000)
+#define NEXT_CONN_PARAMS_UPDATE_DELAY   APP_TIMER_TICKS(2000)
+#define MAX_CONN_PARAMS_UPDATE_COUNT    0
 
-#define FIRST_CONN_PARAMS_UPDATE_DELAY  APP_TIMER_TICKS(20000)                  /**< Time from initiating event (connect or start of notification) to first time sd_ble_gap_conn_param_update is called (15 seconds). */
-#define NEXT_CONN_PARAMS_UPDATE_DELAY   APP_TIMER_TICKS(5000)                   /**< Time between each call to sd_ble_gap_conn_param_update after the first call (5 seconds). */
-#define MAX_CONN_PARAMS_UPDATE_COUNT    3                                       /**< Number of attempts before giving up the connection parameter negotiation. */
-
-#define DEAD_BEEF                       0xDEADBEEF                              /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
 NRF_BLE_GATT_DEF(m_gatt);                                                       /**< GATT module instance. */
 NRF_BLE_QWR_DEF(m_qwr);                                                         /**< Context for the Queued Write module.*/
@@ -232,42 +234,23 @@ static void advertising_init(void)
     APP_ERROR_CHECK(err_code);
 }
 
+//===============================================
+// Negotiating connection parameters (min/max conn intervals)
+//===============================================
 
-/**@brief Function for handling the Connection Parameters Module.
- *
- * @details This function will be called for all events in the Connection Parameters Module that
- *          are passed to the application.
- *
- * @note All this function does is to disconnect. This could have been done by simply
- *       setting the disconnect_on_fail config parameter, but instead we use the event
- *       handler mechanism to demonstrate its use.
- *
- * @param[in] p_evt  Event received from the Connection Parameters Module.
- */
 static void on_conn_params_evt(ble_conn_params_evt_t * p_evt)
 {
     ret_code_t err_code;
 
-    if (p_evt->evt_type == BLE_CONN_PARAMS_EVT_FAILED)
-    {
-        err_code = sd_ble_gap_disconnect(m_conn_handle, BLE_HCI_CONN_INTERVAL_UNACCEPTABLE);
-        APP_ERROR_CHECK(err_code);
-    }
+    if (p_evt->evt_type == BLE_CONN_PARAMS_EVT_FAILED) {NRF_LOG_DEBUG("parameter update failed");}
+    else {NRF_LOG_DEBUG("parameter update finished");}
 }
 
-
-/**@brief Function for handling a Connection Parameters error.
- *
- * @param[in] nrf_error  Error code containing information about what went wrong.
- */
 static void conn_params_error_handler(uint32_t nrf_error)
 {
     APP_ERROR_HANDLER(nrf_error);
 }
 
-
-/**@brief Function for initializing the Connection Parameters module.
- */
 static void conn_params_init(void)
 {
     ret_code_t             err_code;
@@ -312,7 +295,11 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
     switch (p_ble_evt->header.evt_id)
     {
         case BLE_GAP_EVT_CONNECTED:
-            NRF_LOG_INFO("Connected");
+            NRF_LOG_INFO("Connected with conn interval %d %d, lat %d, tout %d",
+                         p_ble_evt->evt.gap_evt.params.connected.conn_params.min_conn_interval,
+                         p_ble_evt->evt.gap_evt.params.connected.conn_params.max_conn_interval,
+                         p_ble_evt->evt.gap_evt.params.connected.conn_params.slave_latency,
+                         p_ble_evt->evt.gap_evt.params.connected.conn_params.conn_sup_timeout);
             m_conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
             err_code = nrf_ble_qwr_conn_handle_assign(&m_qwr, m_conn_handle);
             APP_ERROR_CHECK(err_code);
@@ -322,6 +309,14 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             NRF_LOG_INFO("Disconnected for reason %d", p_ble_evt->evt.gap_evt.params.disconnected.reason);
             m_conn_handle = BLE_CONN_HANDLE_INVALID;
             advertising_start();
+            break;
+
+        case BLE_GAP_EVT_CONN_PARAM_UPDATE:
+            NRF_LOG_INFO("Param update request with conn interval %d %d, lat %d, tout %d",
+                         p_ble_evt->evt.gap_evt.params.conn_param_update_request.conn_params.min_conn_interval,
+                         p_ble_evt->evt.gap_evt.params.conn_param_update_request.conn_params.max_conn_interval,
+                         p_ble_evt->evt.gap_evt.params.conn_param_update_request.conn_params.slave_latency,
+                         p_ble_evt->evt.gap_evt.params.conn_param_update_request.conn_params.conn_sup_timeout);
             break;
 
         case BLE_GAP_EVT_SEC_PARAMS_REQUEST:
@@ -368,6 +363,7 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             break;
 
         default:
+            NRF_LOG_DEBUG("Untreated event 0x%x",p_ble_evt->header.evt_id);
             // No implementation needed.
             break;
     }
@@ -546,14 +542,13 @@ int main(void)
     nfc_init();
 
     // Start execution.
-    mpu_start();
     battery_start();
     advertising_start();
     NRF_LOG_INFO("Orb started.");
 
 
     scanner_init();
-    sd_ble_gap_scan_start(&scan_params,&scan_data);
+    //sd_ble_gap_scan_start(&scan_params,&scan_data);
 
     // Enter main loop.
     for (;;)

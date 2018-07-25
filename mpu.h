@@ -108,8 +108,7 @@ NRF_TWI_SENSOR_DEF(m_mpu, &m_twi_mngr, 30); /**< TWI Sensor instance.*/
 // MPU BLE Service instance, to be initilized in mpu_init
 MPU_SERVICE_DEF(m_mpu_service);
 
-#define MPU_NOTIFICATION_INTERVAL       APP_TIMER_TICKS(1000)                    /**< MPU BLE notification interval (ticks). */
-APP_TIMER_DEF(m_mpu_notification_timer_id);                                     /**< MPU BLE notification timer. */
+static uint8_t mpu_fail=0;
 
 
 
@@ -188,7 +187,9 @@ static void fusion_accel_gyro_mag() // This is expected to be invoked at 100Hz, 
     else MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
     static int i = 0;
     i++;
-    if (i==20){
+    if (i==10){
+        i=0;
+        mpu_ble_notification();
         //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(ax), sens_buffer[ 0], sens_buffer[ 1]);
         //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(ay), sens_buffer[ 2], sens_buffer[ 3]);
         //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(az), sens_buffer[ 4], sens_buffer[ 5]);
@@ -205,7 +206,6 @@ static void fusion_accel_gyro_mag() // This is expected to be invoked at 100Hz, 
         //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(q0*q0+q1*q1+q2*q2+q3*q3));
         //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(ax*ax+ay*ay+az*az));
         //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER, NRF_LOG_FLOAT(kax*kax+kay*kay+(kaz+1)*(kaz+1)));
-        i=0;
     }
 }
 
@@ -287,7 +287,7 @@ static ble_gap_adv_params_t mpu_adv_params;
 
 /**@brief Trigger a BLE notification and update advert packet. Needs to be called from a timer. The p_context contains the connection handle.
  */
-void mpu_ble_notification(void * p_context)
+void mpu_ble_notification()
 {
     // The BLE service
     mpu_service_on_orientation_change(&m_mpu_service, q0, q1, q2, q3, kax, kay, kaz);
@@ -296,6 +296,7 @@ void mpu_ble_notification(void * p_context)
     uint8_t * p_encoded_data = mpu_p_adv_data->adv_data.p_data;
     uint16_t * p_offset = &mpu_p_adv_data->adv_data.len;
     p_encoded_data[*p_offset-1] = 0x01;
+    if (mpu_fail!=0) {/*TODO*/}
     /*err_code = sd_ble_gap_adv_stop(*mpu_p_adv_handle);
     APP_ERROR_CHECK(err_code);
     err_code = sd_ble_gap_adv_set_configure(mpu_p_adv_handle, mpu_p_adv_data, &mpu_adv_params);
@@ -310,8 +311,6 @@ void mpu_ble_notification(void * p_context)
 #define read_byte(addr) buffer[0]=addr; if(nrfx_twim_tx(&twi_master, MPU_ADDR, buffer, 1, true) || nrfx_twim_rx(&twi_master, MPU_ADDR, buffer, 1)) goto TWI_FAIL
 #define write_mag_byte(addr, data) buffer[0]=addr; buffer[1]=data; if(nrfx_twim_tx(&twi_master, MAG_ADDR, buffer, 2, false)) goto TWI_FAIL
 #define read_mag_byte(addr) buffer[0]=addr; if(nrfx_twim_tx(&twi_master, MAG_ADDR, buffer, 1, true) || nrfx_twim_rx(&twi_master, MAG_ADDR, buffer, 1)) goto TWI_FAIL
-
-static uint8_t mpu_fail=0;
 
 /**@brief Initialize the MPU9250. It internally takes care of TWI initialization. The MPU is set to 200Hz and the MAG is set to 100Hz.
  */
@@ -330,7 +329,7 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq, uint8_t * p_adv_handle, ble
         .scl                = scl,
         .sda                = sda,
         .frequency          = NRF_TWI_FREQ_400K,
-        .interrupt_priority = APP_IRQ_PRIORITY_HIGHEST, // TODO this might be too low
+        .interrupt_priority = APP_IRQ_PRIORITY_LOWEST, // TODO this might be too low
         .hold_bus_uninit    = true
     };
     nrfx_twim_init(&twi_master, &config, NULL, NULL);
@@ -448,7 +447,7 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq, uint8_t * p_adv_handle, ble
         .scl                = scl,
         .sda                = sda,
         .frequency          = NRF_TWI_FREQ_400K,
-        .interrupt_priority = APP_IRQ_PRIORITY_HIGHEST,
+        .interrupt_priority = APP_IRQ_PRIORITY_LOWEST,
         .clear_bus_init     = false
     };
     err_code = nrf_twi_mngr_init(&m_twi_mngr, &config_async);
@@ -473,8 +472,14 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq, uint8_t * p_adv_handle, ble
     mpu_read_and_fuse_sensors();
     NRF_LOG_DEBUG("MPU init done.");
 
+    goto FINALLY;
 
+    TWI_FAIL:
+    nrfx_twim_uninit(&twi_master);
+    mpu_fail = 1;
+    NRF_LOG_DEBUG("There is a serious problem with TWI!");
 
+    FINALLY:
     // Initialize the BLE services and advertisement data.
     // TODO decouple the BLE MPU service from the MPU driver from the Sensor fusion, and decouple from the advert_init in main.c
     mpu_p_adv_handle = p_adv_handle;
@@ -487,31 +492,8 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq, uint8_t * p_adv_handle, ble
     mpu_adv_params.filter_policy   = BLE_GAP_ADV_FP_ANY;
     mpu_adv_params.interval        = 64;/**< The advertising interval (in units of 0.625 ms; this value corresponds to 40 ms). */
     mpu_service_init(&m_mpu_service);
-
-
-    err_code = app_timer_create(&m_mpu_notification_timer_id, // TODO this time should not be necessary, this should be a callback, but there is a bit of a problem with relative priorities.
-                                APP_TIMER_MODE_REPEATED,
-                                mpu_ble_notification);
-    APP_ERROR_CHECK(err_code);
-    return;
-    TWI_FAIL:
-    nrfx_twim_uninit(&twi_master);
-    mpu_fail = 1;
-    NRF_LOG_DEBUG("There is a serious problem with TWI!");
 }
 
-
-void mpu_start(void)
-{
-    ret_code_t err_code;
-
-    // Start application timers.
-    if (mpu_fail==0)
-    {
-        err_code = app_timer_start(m_mpu_notification_timer_id, MPU_NOTIFICATION_INTERVAL, NULL);
-        APP_ERROR_CHECK(err_code);
-    }
-}
 
 // TODO make the following convenience functions
 
