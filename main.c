@@ -82,7 +82,7 @@
 #define APP_BLE_OBSERVER_PRIO           3    // Application's BLE observer priority. You shouldn't need to modify this value.
 #define APP_BLE_CONN_CFG_TAG            1    // A tag identifying the SoftDevice BLE configuration.
 
-#define APP_ADV_INTERVAL                640  // in units of 0.625 ms
+#define APP_ADV_INTERVAL                180  // in units of 0.625 ms
 #define APP_ADV_DURATION                BLE_GAP_ADV_TIMEOUT_GENERAL_UNLIMITED
 
 #define MIN_CONN_INTERVAL               6   // in units of 1.25us
@@ -533,7 +533,7 @@ int main(void)
     services_init();
     battery_init(BATTERY_AIN);
     ws2812_init(WS2812_LED,WS2812_UNUSED1,WS2812_UNUSED2); // TODO This includes I2S init and BLE service init. The WS2812 driver needs to become a bit more modular.
-    mpu_init(MPU_SCL, MPU_SDA, MPU_IRQ, &m_adv_handle, &m_adv_data); // TODO This includes TWI init and BLE service init. The MPU driver needs to become a bit more modular if other TWI devices are to be added or advanced BLE configuration is to be used.
+    mpu_init(MPU_SCL, MPU_SDA, MPU_IRQ, &m_adv_handle); // TODO This includes TWI init and BLE service init. The MPU driver needs to become a bit more modular if other TWI devices are to be added or advanced BLE configuration is to be used.
     haptic_init(MOTOR); // TODO This includes PWM init and BLE service init. It needs to be more modular if the service is to be reused.
 
     advertising_init();

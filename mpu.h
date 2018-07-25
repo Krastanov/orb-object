@@ -101,6 +101,7 @@ static uint8_t sens_buffer[MPU_SENS_SIZE];  /**< Buffer for all sensor data (acc
 static float magcalibration[3]; // Calibration values for the magnetometer.
 
 static float gx, gy, gz, ax, ay, az, mx, my, mz; // TODO explain why it is not volatile
+static float a_norm2;
 
 NRF_TWI_MNGR_DEF(m_twi_mngr, 4, 0);         /**< TWI transaction manager.*/
 NRF_TWI_SENSOR_DEF(m_mpu, &m_twi_mngr, 30); /**< TWI Sensor instance.*/
@@ -168,6 +169,77 @@ static uint32_t remove_bias(float* ax, float* ay, float* az, float* gx, float* g
     }
 }
 
+static void calc_a_norm2()
+{
+    a_norm2 = 0.99*a_norm2 + 0.01*(ax*ax + ay*ay + az*az - 1);
+}
+
+// TODO This is extremely entangled with the advertising_init from main... fix that with better abstraction.
+static uint8_t * mpu_p_adv_handle;
+
+static uint8_t mpu_enc_advdata0[BLE_GAP_ADV_SET_DATA_SIZE_MAX];
+static uint8_t mpu_enc_scan_response_data0[BLE_GAP_ADV_SET_DATA_SIZE_MAX];
+static uint8_t mpu_enc_advdata1[BLE_GAP_ADV_SET_DATA_SIZE_MAX];
+static uint8_t mpu_enc_scan_response_data1[BLE_GAP_ADV_SET_DATA_SIZE_MAX];
+static ble_gap_adv_data_t mpu_adv_data0 =
+{
+    .adv_data =
+    {
+        .p_data = mpu_enc_advdata0,
+        .len    = BLE_GAP_ADV_SET_DATA_SIZE_MAX
+    },
+    .scan_rsp_data =
+    {
+        .p_data = mpu_enc_scan_response_data0,
+        .len    = BLE_GAP_ADV_SET_DATA_SIZE_MAX
+
+    }
+};
+static ble_gap_adv_data_t mpu_adv_data1 =
+{
+    .adv_data =
+    {
+        .p_data = mpu_enc_advdata1,
+        .len    = BLE_GAP_ADV_SET_DATA_SIZE_MAX
+    },
+    .scan_rsp_data =
+    {
+        .p_data = mpu_enc_scan_response_data1,
+        .len    = BLE_GAP_ADV_SET_DATA_SIZE_MAX
+
+    }
+};
+uint8_t mpu_curr_adv_data = 0;
+
+/**@brief Update the advert packet to contain motion data.
+ */
+void mpu_update_advert()
+{
+    if (mpu_fail!=0) return;
+    ret_code_t err_code;
+    ble_gap_adv_data_t * new_data;
+    if (mpu_curr_adv_data) // A new buffer is needed each time.
+    {
+        new_data = &mpu_adv_data1;
+        mpu_curr_adv_data = 0;
+    } else
+    {
+        new_data = &mpu_adv_data0;
+        mpu_curr_adv_data = 1;
+    }
+    uint8_t * p_encoded_data = new_data->adv_data.p_data;
+    uint16_t * p_offset = &new_data->adv_data.len;
+    uint8_t cast = a_norm2/2*255;
+    if (cast==0xFF) {cast = cast-1;}
+    p_encoded_data[*p_offset-1] = cast;
+    //err_code = sd_ble_gap_adv_stop(*mpu_p_adv_handle);
+    //APP_ERROR_CHECK(err_code);
+    err_code = sd_ble_gap_adv_set_configure(mpu_p_adv_handle, new_data, NULL);
+    APP_ERROR_CHECK(err_code);
+    //err_code = sd_ble_gap_adv_start(*mpu_p_adv_handle, 1); // TODO The "1" is APP_BLE_CONN_CFG_TAG from main.c. This should not be hardcoded.
+    //APP_ERROR_CHECK(err_code);
+}
+
 /**@brief Use the accel, gyro, and compas values from the sensor buffer to run sensor fusion. It performs simple bias removal.
  */
 static void fusion_accel_gyro_mag() // This is expected to be invoked at 100Hz, interleaved with `fusion_accel_gyro`
@@ -183,13 +255,21 @@ static void fusion_accel_gyro_mag() // This is expected to be invoked at 100Hz, 
     mz =-((int16_t)((int16_t)sens_buffer[19] << 8 | sens_buffer[18]))*magcalibration[2];
     uint32_t mag_status;
     mag_status = remove_bias(&ax, &ay, &az, &gx, &gy, &gz, &mx, &my, &mz);
+    calc_a_norm2();
     if (mag_status==0) MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
     else MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
-    static int i = 0;
+    static int i = 0, j = 0;
     i++;
-    if (i==10){
+    j++;
+    if (i==100) // 1Hz
+    {
         i=0;
-        mpu_ble_notification();
+        mpu_update_advert();
+    }
+    if (j==10) // 10Hz
+    {
+        j=0;
+        mpu_service_on_orientation_change(&m_mpu_service, q0, q1, q2, q3, kax, kay, kaz);
         //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(ax), sens_buffer[ 0], sens_buffer[ 1]);
         //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(ay), sens_buffer[ 2], sens_buffer[ 3]);
         //NRF_LOG_DEBUG(NRF_LOG_FLOAT_MARKER " %d %d", NRF_LOG_FLOAT(az), sens_buffer[ 4], sens_buffer[ 5]);
@@ -220,6 +300,7 @@ static void fusion_accel_gyro() // This is expected to be invoked at 100Hz, inte
     gy = ((int16_t)((int16_t)sens_buffer[10] << 8 | sens_buffer[11]))*gres;
     gz = ((int16_t)((int16_t)sens_buffer[12] << 8 | sens_buffer[13]))*gres;
     remove_bias(&ax, &ay, &az, &gx, &gy, &gz, NULL, NULL, NULL);
+    calc_a_norm2();
     MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
 }
 
@@ -277,35 +358,6 @@ static void irq_callback(nrfx_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
     mpu_read_and_fuse_sensors();
 }
 
-
-// TODO This is extremely entangled with the advertising_init from main... fix that with better abstraction.
-static ble_advdata_t mpu_advdata;
-static ble_advdata_t mpu_srdata;
-static uint8_t * mpu_p_adv_handle;
-static ble_gap_adv_data_t * mpu_p_adv_data;
-static ble_gap_adv_params_t mpu_adv_params;
-
-/**@brief Trigger a BLE notification and update advert packet. Needs to be called from a timer. The p_context contains the connection handle.
- */
-void mpu_ble_notification()
-{
-    // The BLE service
-    mpu_service_on_orientation_change(&m_mpu_service, q0, q1, q2, q3, kax, kay, kaz);
-    // The BLE advert package
-    ret_code_t err_code;
-    uint8_t * p_encoded_data = mpu_p_adv_data->adv_data.p_data;
-    uint16_t * p_offset = &mpu_p_adv_data->adv_data.len;
-    p_encoded_data[*p_offset-1] = 0x01;
-    if (mpu_fail!=0) {/*TODO*/}
-    /*err_code = sd_ble_gap_adv_stop(*mpu_p_adv_handle);
-    APP_ERROR_CHECK(err_code);
-    err_code = sd_ble_gap_adv_set_configure(mpu_p_adv_handle, mpu_p_adv_data, &mpu_adv_params);
-    APP_ERROR_CHECK(err_code);
-    err_code = sd_ble_gap_adv_start(*mpu_p_adv_handle, 1); // TODO The "1" is APP_BLE_CONN_CFG_TAG from main.c. This should not be hardcoded.
-    APP_ERROR_CHECK(err_code);
-*/
-}
-
 // For use only inside mpu_init!
 #define write_byte(addr, data) buffer[0]=addr; buffer[1]=data; if(nrfx_twim_tx(&twi_master, MPU_ADDR, buffer, 2, false)) goto TWI_FAIL
 #define read_byte(addr) buffer[0]=addr; if(nrfx_twim_tx(&twi_master, MPU_ADDR, buffer, 1, true) || nrfx_twim_rx(&twi_master, MPU_ADDR, buffer, 1)) goto TWI_FAIL
@@ -314,7 +366,7 @@ void mpu_ble_notification()
 
 /**@brief Initialize the MPU9250. It internally takes care of TWI initialization. The MPU is set to 200Hz and the MAG is set to 100Hz.
  */
-void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq, uint8_t * p_adv_handle, ble_gap_adv_data_t * p_adv_data) // based on github.com/kriswiner/MPU9250
+void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq, uint8_t * p_adv_handle) // based on github.com/kriswiner/MPU9250
 {
     // TODO use DPM and/or FIFO
     // TODO set low-pass filter
@@ -475,22 +527,59 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq, uint8_t * p_adv_handle, ble
     goto FINALLY;
 
     TWI_FAIL:
+
     nrfx_twim_uninit(&twi_master);
     mpu_fail = 1;
     NRF_LOG_DEBUG("There is a serious problem with TWI!");
 
     FINALLY:
-    // Initialize the BLE services and advertisement data.
-    // TODO decouple the BLE MPU service from the MPU driver from the Sensor fusion, and decouple from the advert_init in main.c
     mpu_p_adv_handle = p_adv_handle;
-    mpu_p_adv_data = p_adv_data;
-    memset(&mpu_adv_params, 0, sizeof(mpu_adv_params));
-    mpu_adv_params.primary_phy     = BLE_GAP_PHY_1MBPS;
-    mpu_adv_params.duration        = BLE_GAP_ADV_TIMEOUT_GENERAL_UNLIMITED;   /**< The advertising time-out (in units of seconds). When set to 0, we will never time out. */ 
-    mpu_adv_params.properties.type = BLE_GAP_ADV_TYPE_CONNECTABLE_SCANNABLE_UNDIRECTED;
-    mpu_adv_params.p_peer_addr     = NULL;
-    mpu_adv_params.filter_policy   = BLE_GAP_ADV_FP_ANY;
-    mpu_adv_params.interval        = 64;/**< The advertising interval (in units of 0.625 ms; this value corresponds to 40 ms). */
+
+    // Initialize the advertisement data.
+    // TODO use memcopy instead of this silly repetition.
+    ble_advdata_t advdata;
+    ble_advdata_t srdata;
+    memset(&advdata, 0, sizeof(advdata));
+    advdata.name_type          = BLE_ADVDATA_NO_NAME;
+    advdata.include_appearance = false;
+    advdata.flags              = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
+    memset(&srdata, 0, sizeof(srdata));
+    err_code = ble_advdata_encode(&advdata, mpu_adv_data0.adv_data.p_data, &mpu_adv_data0.adv_data.len);
+    err_code = ble_advdata_encode(&advdata, mpu_adv_data1.adv_data.p_data, &mpu_adv_data1.adv_data.len);
+    APP_ERROR_CHECK(err_code);
+    // Manually add a 128-uuid service data (not supported by the Nordic SDK)
+    // TODO move this to a more encapsulated location
+    uint8_t * p_encoded_data = mpu_adv_data0.adv_data.p_data;
+    uint16_t * p_offset = &mpu_adv_data0.adv_data.len;
+    uint8_t data_size = 1;
+    p_encoded_data[*p_offset]  = (uint8_t)(AD_TYPE_FIELD_SIZE + 16 + data_size);
+    *p_offset                 += AD_LENGTH_FIELD_SIZE;
+    p_encoded_data[*p_offset]  = BLE_GAP_AD_TYPE_SERVICE_DATA_128BIT_UUID;
+    *p_offset                 += AD_TYPE_FIELD_SIZE;
+    uint8_t service_uuid[16] = {0x27, 0x3c, 0xa0, 0x5a, 0xcd, 0x0e, 0x4f, 0x32, 0xbc, 0xc9, 0x28, 0x98, 0x9b, 0xb6, 0xe9, 0xa6};
+    for (int i=0; i<16; i++) {
+        p_encoded_data[*p_offset+i] = service_uuid[i];
+    }
+    *p_offset += 16;
+    p_encoded_data[*p_offset] = 0x00;
+    *p_offset += 1;
+    p_encoded_data = mpu_adv_data1.adv_data.p_data;
+    p_offset = &mpu_adv_data1.adv_data.len;
+    p_encoded_data[*p_offset]  = (uint8_t)(AD_TYPE_FIELD_SIZE + 16 + data_size);
+    *p_offset                 += AD_LENGTH_FIELD_SIZE;
+    p_encoded_data[*p_offset]  = BLE_GAP_AD_TYPE_SERVICE_DATA_128BIT_UUID;
+    *p_offset                 += AD_TYPE_FIELD_SIZE;
+    for (int i=0; i<16; i++) {
+        p_encoded_data[*p_offset+i] = service_uuid[i];
+    }
+    *p_offset += 16;
+    p_encoded_data[*p_offset] = 0x00;
+    *p_offset += 1;
+    err_code = ble_advdata_encode(&srdata, mpu_adv_data0.scan_rsp_data.p_data, &mpu_adv_data0.scan_rsp_data.len);
+    err_code = ble_advdata_encode(&srdata, mpu_adv_data1.scan_rsp_data.p_data, &mpu_adv_data1.scan_rsp_data.len);
+    APP_ERROR_CHECK(err_code);
+
+    // Initialize the BLE service
     mpu_service_init(&m_mpu_service);
 }
 
