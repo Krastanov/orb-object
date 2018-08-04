@@ -189,7 +189,7 @@ static void advertising_init(void)
     // Build and set advertising data.
     memset(&advdata, 0, sizeof(advdata));
 
-    advdata.name_type          = BLE_ADVDATA_NO_NAME;
+    advdata.name_type          = BLE_ADVDATA_FULL_NAME;
     advdata.include_appearance = false;
     advdata.flags              = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
 

@@ -394,7 +394,7 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq, uint8_t * p_adv_handle) // 
     if (buffer[0]!=MPU_WHO_9250 && buffer[0]!=MPU_WHO_9255)
     {
         NRF_LOG_DEBUG("MPU not recognized. WHO_AM_I is 0x%x", buffer[0]);
-        APP_ERROR_CHECK(1); // TODO proper error code
+        goto TWI_FAIL;
     }
     NRF_LOG_DEBUG("MPU recognized.");
 
@@ -540,7 +540,7 @@ void mpu_init(uint8_t scl, uint8_t sda, uint8_t irq, uint8_t * p_adv_handle) // 
     ble_advdata_t advdata;
     ble_advdata_t srdata;
     memset(&advdata, 0, sizeof(advdata));
-    advdata.name_type          = BLE_ADVDATA_NO_NAME;
+    advdata.name_type          = BLE_ADVDATA_FULL_NAME;
     advdata.include_appearance = false;
     advdata.flags              = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
     memset(&srdata, 0, sizeof(srdata));
