@@ -2,15 +2,20 @@
 
 #define APP_BLE_OBSERVER_PRIO   3    /**< Application's BLE observer priority. You shouldn't need to modify this value. */
 
+
+#define SCAN_INTERVAL   MSEC_TO_UNITS(40, UNIT_0_625_MS)
+#define SCAN_WINDOW     MSEC_TO_UNITS(30, UNIT_0_625_MS) // The window was to be smaller than the interval in order to have reliable advertisements while scanning.
+
 static ble_gap_scan_params_t scan_params = {
     .extended=0, .report_incomplete_evts=0, .active=0, .filter_policy=BLE_GAP_SCAN_FP_ACCEPT_ALL, .scan_phys=BLE_GAP_PHY_AUTO,
-    .interval=2000*10, .window=2000*10, .timeout=2000*10};
+    .interval=SCAN_INTERVAL, .window=SCAN_WINDOW,
+    .timeout=BLE_GAP_SCAN_TIMEOUT_UNLIMITED};
 static uint8_t scan_buffer[200];
 static ble_data_t scan_data = {.p_data = scan_buffer, .len = 100};
 
 static uint8_t scanner_check_uuid(ble_data_t * adv_data)
 {
-    if (adv_data->len!=24) return 0;
+    if (adv_data->len!=23) return 0;
     uint8_t beacon_uuid[] = {0x3a, 0xa8, 0x0a, 0x58, 0x9e, 0xba, 0x4c, 0xcd, 0xbc, 0x73, 0x1f, 0x16, 0x88, 0x00, 0xbb, 0x81};
     for (uint8_t i=0; i<sizeof(beacon_uuid); i++)
     {
@@ -40,7 +45,9 @@ static void scanner_ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_contex
             ble_gap_evt_adv_report_t const * report = &p_ble_evt->evt.gap_evt.params.adv_report;
             if (scanner_check_uuid(&report->data))
             {
-                NRF_LOG_DEBUG("ADV EVENT RSSI %d DATA %d %d", report->rssi, report->data.p_data[report->data.len-2], report->data.p_data[report->data.len-1]);
+                NRF_LOG_DEBUG("ADV EVENT MAC %x:%x RSSI %d LEN %d DATA %d %d",
+                              report->peer_addr.addr[5], report->peer_addr.addr[4],
+                              report->rssi, report->data.len, report->data.p_data[report->data.len-2], report->data.p_data[report->data.len-1]);
             }
             sd_ble_gap_scan_start(NULL, &scan_data);
         } break;
