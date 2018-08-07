@@ -104,6 +104,7 @@
       <file file_name="../../../scanner.h" />
       <file file_name="../../../multilateration.h" />
       <file file_name="../../../multilateration.c" />
+      <file file_name="../../../scanner.c" />
     </folder>
     <folder Name="nRF_Segger_RTT">
       <file file_name="../../../../../../external/segger_rtt/SEGGER_RTT.c" />
