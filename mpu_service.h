@@ -167,8 +167,6 @@ uint32_t mpu_service_init(mpu_service_t * p_mpu_service)
  */
 void mpu_service_on_ble_evt(ble_evt_t const * p_ble_evt, void * p_context)
 {
-    haptic_service_t * p_haptic_service = (haptic_service_t *)p_context;
-
     switch (p_ble_evt->header.evt_id)
     {
         default:
