@@ -22,7 +22,6 @@
 #include "ble_hci.h"
 #include "ble_srv_common.h"
 #include "ble_advdata.h"
-#include "ble_bas.h"
 #include "ble_conn_params.h"
 #include "nrf_sdh.h"
 #include "nrf_sdh_ble.h"
@@ -446,8 +445,7 @@ static void services_init(void)
 {
     ret_code_t               err_code;
     nrf_ble_qwr_init_t qwr_init = {0};
-    ble_bas_init_t     bas_init;
-
+    
     // TODO Ugh... what is this Queued Write module for...
     // Initialize Queued Write Module.
     qwr_init.error_handler = nrf_qwr_error_handler;

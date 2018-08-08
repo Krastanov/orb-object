@@ -105,6 +105,7 @@
       <file file_name="../../../multilateration.h" />
       <file file_name="../../../multilateration.c" />
       <file file_name="../../../scanner.c" />
+      <file file_name="../../../battery_service.c" />
     </folder>
     <folder Name="nRF_Segger_RTT">
       <file file_name="../../../../../../external/segger_rtt/SEGGER_RTT.c" />
