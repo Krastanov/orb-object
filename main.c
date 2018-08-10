@@ -32,6 +32,7 @@
 #include "nrfx_saadc.h"
 #include "nrf_twi_mngr.h"
 #include "nrf_twi_sensor.h"
+#include "nrf_delay.h"
 
 #include "nfc_t2t_lib.h"
 #include "nfc_ndef_msg.h"
